@@ -234,12 +234,12 @@ struct mainFunctions
 
 					if (key == keyboardKey && !bEvent->IsPressed())
 						kk = true;
-					if (key == gamepadKey && !bEvent->IsPressed())
-						gk = true;
+					//if (key == gamepadKey && !bEvent->IsPressed())
+					//	gk = true;
 					if (key == keyboardMod)
 						mk = true;
-					if (key == gamepadMod)
-						mg = true;
+					//if (key == gamepadMod)
+					//	mg = true;
 				}
 				a_event = a_event->next;
 			} while (a_event);
