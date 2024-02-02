@@ -39,8 +39,8 @@ void loadIni()
 
 	keyboardKey = (uint16_t)ini.GetDoubleValue("settings", "iKeyboardKey", 34);
 	keyboardMod = (uint16_t)ini.GetDoubleValue("settings", "iKeyboardModifier", 0);
-	gamepadKey = 0;//(uint16_t) ini.GetDoubleValue("settings", "iGamePadKey", 281);              //RT
-	gamepadMod = 0;  //(uint16_t) ini.GetDoubleValue("settings", "iGamePadMod", 276);	//A
+	gamepadKey = (uint16_t) ini.GetDoubleValue("settings", "iGamePadKey", 9);		//LT
+	gamepadMod = (uint16_t)ini.GetDoubleValue("settings", "iGamePadMod", 4096);  //A
 	
 	auto s = (char*)ini.GetValue("settings", "sRequiredPerk1H", "");
 	reqPerkEditorID_1H = new char[strlen(s) + 1];
@@ -225,9 +225,9 @@ struct mainFunctions
 						key = ButtonEventToDXScanCode(RE::INPUT_DEVICE::kMouse, bEvent);
 					}
 					// Gamepad
-					else if (a_event->device.get() == RE::INPUT_DEVICE::kGamepad) {
-						key = ButtonEventToDXScanCode(RE::INPUT_DEVICE::kGamepad, bEvent);
-					}
+					//else if (a_event->device.get() == RE::INPUT_DEVICE::kGamepad) {
+					//	key = ButtonEventToDXScanCode(RE::INPUT_DEVICE::kGamepad, bEvent);
+					//}
 					// Keyboard
 					else
 						key = ButtonEventToDXScanCode(RE::INPUT_DEVICE::kKeyboard, bEvent);
@@ -518,8 +518,8 @@ namespace controlMap
 			RE::ControlMap::UserEventMapping n;
 			n.eventID = "GripSwitch";
 			//n.inputKey = (std::uint16_t)a_controlMap->GetMappedKey("Right Attack/Block", RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay);
-			n.inputKey = (std::uint16_t) a_controlMap->GetMappedKey("Shout", RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay);
-			n.modifier = (std::uint16_t) a_controlMap->GetMappedKey("Activate", RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay);
+			n.inputKey = gamepadKey;	//(std::uint16_t) a_controlMap->GetMappedKey("Shout", RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay);
+			n.modifier = gamepadMod;	//(std::uint16_t) a_controlMap->GetMappedKey("Activate", RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay);
 			n.remappable = false;
 			n.linked = false;
 			n.pad14 = 0;
