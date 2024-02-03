@@ -93,7 +93,11 @@ struct mainFunctions
 			return 0;
 
 		if (form->IsWeapon())
+		{
+			if (form->As<RE::TESObjectWEAP>()->IsCrossbow())
+				return 12;		//xbow type is 9 same as spells but graph vars use the value 12
 			return (int)form->As<RE::TESObjectWEAP>()->GetWeaponType();
+		}
 
 		//spells
 		if (form->IsMagicItem())
@@ -449,20 +453,30 @@ struct mainFunctions
 
 	static void equipLeftSlot(RE::PlayerCharacter* player, RE::TESForm* a_weapon)
 	{
-		RE::BGSEquipSlot* slot;
-		if (a_weapon->IsArmor())
-			slot = shieldSlot;
-		else
-			slot = leftHandSlot;
+		//check if weapon/armor is still in inventory
+		auto inventory = player->GetInventory();
+		for (auto& [item, data] : inventory) 
+		{
+			const auto& [count, entry] = data;
+			if (count > 0 && item->GetFormID() == a_weapon->GetFormID() || a_weapon->IsMagicItem()) 
+			{
+				RE::BGSEquipSlot* slot;
+				if (a_weapon->IsArmor())
+					slot = shieldSlot;
+				else
+					slot = leftHandSlot;
 
-		auto* task = SKSE::GetTaskInterface();
-		auto  equipManager = RE::ActorEquipManager::GetSingleton();
-		task->AddTask([=]() {
-			if (a_weapon->IsMagicItem())
-				equipManager->EquipSpell(player, a_weapon->As<RE::SpellItem>(), slot);
-			else  //if (a_weapon->IsWeapon() || a_weapon->IsArmor())
-				equipManager->EquipObject(player, a_weapon->As<RE::TESBoundObject>(), a_weapon->As<RE::ExtraDataList>(), 1, slot, true, false, true, true);
-		});
+				auto* task = SKSE::GetTaskInterface();
+				auto  equipManager = RE::ActorEquipManager::GetSingleton();
+				task->AddTask([=]() {
+					if (a_weapon->IsMagicItem())
+						equipManager->EquipSpell(player, a_weapon->As<RE::SpellItem>(), slot);
+					else
+						equipManager->EquipObject(player, a_weapon->As<RE::TESBoundObject>(), a_weapon->As<RE::ExtraDataList>(), 1, slot, true, false, true, true);
+				});
+				return;
+			}
+		}
 	}
 
 	static void unequipLeftSlot(RE::PlayerCharacter* player, bool leftH)
