@@ -341,7 +341,7 @@ struct mainFunctions
 						//is twoHanded
 						newGrip = ONEHANDEDGRIPMODE;
 						//automatically equip a weapon in left hand
-						if (previouLeftWeapon)
+						if (previouLeftWeapon) 
 							equipLeftSlot(player, previouLeftWeapon);
 					}
 					break;
@@ -349,8 +349,9 @@ struct mainFunctions
 					//requip previous leftHand weapon
 					newGrip = DEFAULTGRIPMODE;
 
-					if (previouLeftWeapon)
+					if (previouLeftWeapon) 
 						equipLeftSlot(player, previouLeftWeapon);
+
 
 					break;
 				case ONEHANDEDGRIPMODE:
@@ -479,23 +480,42 @@ struct mainFunctions
 		}
 	}
 
-	static void unequipLeftSlot(RE::PlayerCharacter* player, bool leftH)
+	static void unequipLeftSlot(RE::PlayerCharacter* player, bool leftH, bool now = false)
 	{
 		auto form = player->GetEquippedObject(leftH);
 		if (!form)
 			return;
 
+		RE::BGSEquipSlot* slot;
 		if (form->IsArmor())  //shield check
-			unequipSlot(player, shieldSlot);
+			slot = shieldSlot;
 		else
-			unequipSlot(player, leftHandSlot);
+			slot = leftHandSlot;
+
+		if (now) 
+			unequipSlotNOW(player, slot);
+		 else 
+			unequipSlot(player, slot);
+	}
+
+	static void unequipSlotNOW(RE::PlayerCharacter* player, RE::BGSEquipSlot* slot)
+	{
+		auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163);  //dummydagger
+		if (!form) {
+			return;
+		}
+		auto* proxy = form->As<RE::TESObjectWEAP>();
+		auto* equip_manager = RE::ActorEquipManager::GetSingleton();
+		equip_manager->EquipObject(player, proxy, nullptr, 1, slot, false, true, false);
+		equip_manager->UnequipObject(player, proxy, nullptr, 1, slot, false, true, false);
+		return;
 	}
 
 	static void unequipSlot(RE::PlayerCharacter* player, RE::BGSEquipSlot* slot)
 	{
 		auto* task = SKSE::GetTaskInterface();
 		if (task) {
-			auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163);
+			auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163); //dummydagger
 			if (!form) {
 				return;
 			}
@@ -600,13 +620,19 @@ namespace Events
 
 			auto* form = RE::TESForm::LookupByID(a_event->baseObject);
 
-			if (a_event->equipped) {
-				//if (rightHand && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>())) {
-				//	mainFunctions::unequipLeftSlot(player, true);
-				//	return RE::BSEventNotifyControl::kContinue;
-				//}
+			if (a_event->equipped) 
+			{
+				if (previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  //remove cached left-weapon to prevent duping
+					previouLeftWeapon = nullptr;
 
-				if (leftHand && leftHand->GetFormID() == form->GetFormID() || rightHand && rightHand->GetFormID() == form->GetFormID()) {  //equipped left hand
+				if (rightHand && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>())) //unequip left hand if equipping a 2hander in right hand
+				{
+					mainFunctions::unequipLeftSlot(player, true, true);
+					return RE::BSEventNotifyControl::kContinue;
+				}
+
+				if (leftHand && leftHand->GetFormID() == form->GetFormID() || rightHand && rightHand->GetFormID() == form->GetFormID()) 
+				{
 					switch (gripMode) {
 						case TWOHANDEDGRIPMODE:  //main-hand base is 1H
 							mainFunctions::toggleGrip(DEFAULTGRIPMODE);
@@ -665,8 +691,8 @@ namespace Hooks
 		{
 			//no gameplay effect only changes the r/l icon of equipped weapons
 			//no actor info here so icon might not be accurate when trading with followers etc
-			auto rightHandType = RE::TESForm::LookupByID<RE::BGSEquipType>(0x00020163);  //irondagger
-			auto twoHandType = RE::TESForm::LookupByID<RE::BGSEquipType>(0x1359d);       //irongreatsword
+			auto rightHandType = RE::TESForm::LookupByID<RE::BGSEquipType>(0x00020163);  //dummydagger
+			auto twoHandType = RE::TESForm::LookupByID<RE::BGSEquipType>(0x6a0b8);       //dummygreatsword
 			//dupe 2h equipslot for a 1h
 			if (form && form->IsWeapon()) {
 				if (mainFunctions::isTwoHanded(form->As<RE::TESObjectWEAP>())) {
@@ -793,7 +819,7 @@ namespace Hooks
 			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) {
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
 				func(a1, a_actor, form, a4, a5, a6, a7, a8, a9, a10);
-				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, form, true);
 				return;
 			}
 			return func(a1, a_actor, form, a4, a5, a6, a7, a8, a9, a10);
@@ -809,7 +835,7 @@ namespace Hooks
 			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) {
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
 				std::int64_t a_result = func(a1, a_actor, form, a4);
-				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, form, true);
 				return a_result;
 			}
 			return func(a1, a_actor, form, a4);
