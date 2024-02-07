@@ -625,11 +625,11 @@ namespace Events
 				if (previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  //remove cached left-weapon to prevent duping
 					previouLeftWeapon = nullptr;
 
-				if (rightHand && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>())) //unequip left hand if equipping a 2hander in right hand
-				{
-					mainFunctions::unequipLeftSlot(player, true, true);
-					return RE::BSEventNotifyControl::kContinue;
-				}
+				//if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>())) //unequip left hand if equipping a 2hander in right hand
+				//{
+				//	mainFunctions::unequipLeftSlot(player, true, true);
+				//	return RE::BSEventNotifyControl::kContinue;
+				//}
 
 				if (leftHand && leftHand->GetFormID() == form->GetFormID() || rightHand && rightHand->GetFormID() == form->GetFormID()) 
 				{
