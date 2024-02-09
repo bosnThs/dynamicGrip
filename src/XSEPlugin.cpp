@@ -61,9 +61,6 @@ struct mainFunctions
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
 
-		//REL::Relocation<std::uintptr_t> BGSEquipTypeVtbl{ RE::VTABLE_TESObjectWEAP[9] };
-		//_GetEquipSlot = BGSEquipTypeVtbl.write_vfunc(0x4, GetEquipSlot);
-
 		REL::Relocation<std::uintptr_t> PlayerCharacterVtbl{ RE::VTABLE_PlayerCharacter[0] };
 		_OnItemEquipped = PlayerCharacterVtbl.write_vfunc(0xb2, OnItemEquipped);
 
@@ -74,13 +71,19 @@ struct mainFunctions
 	static std::uint32_t GetEquipState(RE::StandardItemData* a_this)
 	{
 		std::uint32_t a_result = _GetEquipState(a_this);
-		if (a_result > 1) {		//2 -left 3-right 4-left/right
+		if (a_result > 1) {  //2 -left 3-right 4-left/right
 			RE::NiPointer<RE::TESObjectREFR> refr;
 			if (RE::LookupReferenceByHandle(a_this->owner, refr) && refr->IsPlayerRef()) 
 			{
 				auto eqObj = a_this->objDesc->object;
-				if (gripMode == TWOHANDEDGRIPMODE || gripMode == DEFAULTGRIPMODE && eqObj && eqObj->IsWeapon() && isTwoHanded(eqObj->As<RE::TESObjectWEAP>()))
-					return 4;
+				if (eqObj) 
+				{
+					if (gripMode == TWOHANDEDGRIPMODE)
+						return 4;
+
+					if (a_result == 4 && gripMode != DEFAULTGRIPMODE && eqObj->IsWeapon() && isTwoHanded(eqObj->As<RE::TESObjectWEAP>()))
+						return 3;
+				}
 			}
 		}
 		return a_result;
@@ -157,20 +160,6 @@ struct mainFunctions
 		setHandAnim(a_this, true);
 	}
 	static inline REL::Relocation<decltype(OnItemEquipped)> _OnItemEquipped;
-
-	static RE::BGSEquipSlot* GetEquipSlot(RE::BGSEquipType* a_this)
-	{
-		auto slot = a_this->equipSlot;
-
-		auto dataHandler = RE::TESDataHandler::GetSingleton();
-		rightHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f42, "Skyrim.esm");
-		twoHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f45, "Skyrim.esm");
-		if (slot->GetFormID() == twoHandSlot->GetFormID())  //  && gripMode == ONEHANDEDGRIPMODE)
-			return rightHandSlot;
-
-		return slot;
-	}
-	static inline REL::Relocation<decltype(GetEquipSlot)> _GetEquipSlot;
 
 	static bool CanProcessAttackBlock(RE::AttackBlockHandler* a_this, RE::InputEvent* a_event)
 	{
@@ -614,6 +603,13 @@ namespace Events
 			if (!a_event || !a_event->actor || !a_event->actor->IsPlayerRef())
 				return RE::BSEventNotifyControl::kContinue;
 
+			auto ui = RE::UI::GetSingleton();
+			if (ui->IsMenuOpen(RE::InventoryMenu::MENU_NAME)) 
+			{
+				auto invMenu = ui->GetMenu<RE::InventoryMenu>(RE::InventoryMenu::MENU_NAME);
+				invMenu.get()->GetRuntimeData().itemList->Update();
+			}
+
 			auto* player = RE::PlayerCharacter::GetSingleton();
 			auto rightHand = player->GetEquippedObject(false);
 			auto leftHand = player->GetEquippedObject(true);
@@ -625,7 +621,7 @@ namespace Events
 				if (previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  //remove cached left-weapon to prevent duping
 					previouLeftWeapon = nullptr;
 
-				//if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>())) //unequip left hand if equipping a 2hander in right hand
+				//if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && rightHand != leftHand) //unequip left hand if equipping a 2hander in right hand
 				//{
 				//	mainFunctions::unequipLeftSlot(player, true, true);
 				//	return RE::BSEventNotifyControl::kContinue;
