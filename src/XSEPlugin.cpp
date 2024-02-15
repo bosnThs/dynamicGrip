@@ -13,6 +13,8 @@ RE::SpellItem*    dgSpell;
 RE::BGSSoundDescriptorForm* switchIn;
 RE::BGSSoundDescriptorForm* switchOut;
 
+RE::MagicItem* lastBoundWeaponSpell;
+
 RE::WEAPON_TYPE originalRightWeapon;
 RE::WEAPON_TYPE originalLeftWeapon;
 
@@ -85,7 +87,6 @@ struct mainFunctions
 		return _UpdateCombat(a_this);
 	}
 	static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
-
 
 	static void NotifyAnimationGraph(RE::Character* a_this, const RE::BSFixedString& a_eventName)
 	{
@@ -473,37 +474,62 @@ struct mainFunctions
 		sm->Play(a_descriptor);
 	}
 
+	static bool checkBoundWeapon(RE::TESForm* a_weapon)
+	{
+		if (!a_weapon->IsWeapon())
+			return false;
+
+		auto weapnFlags2 = a_weapon->As<RE::TESObjectWEAP>()->weaponData.flags2 & RE::TESObjectWEAP::Data::Flag2::kBoundWeapon;
+		if (weapnFlags2)
+			return true;
+
+		return false;
+	}
+
 	static void checkAndEquipLeft(RE::Actor* a_actor, RE::TESForm* a_form)
 	{
+		if (!a_form)
+			return;
+
+		if (checkBoundWeapon(a_form))
+			a_form = lastBoundWeaponSpell;
+
 		if (a_actor->IsPlayerRef() && a_form)
 			equipLeftSlot(a_actor, a_form);  //save previous left weapon/shield/spell even if empty if player
 	}
 
-	static void equipLeftSlot(RE::Actor* a_actor, RE::TESForm* a_weapon)
+	static bool checkInventory(RE::Actor* a_actor, RE::TESForm* a_weapon)
 	{
 		//check if weapon/armor is still in inventory
 		auto inventory = a_actor->GetInventory();
 		for (auto& [item, data] : inventory) 
 		{
 			const auto& [count, entry] = data;
-			if (count > 0 && item->GetFormID() == a_weapon->GetFormID() || a_weapon->IsMagicItem())
-			{
-				RE::BGSEquipSlot* slot;
-				if (a_weapon->IsArmor())
-					slot = shieldSlot;
-				else
-					slot = leftHandSlot;
+			if (count > 0 && item->GetFormID() == a_weapon->GetFormID()) 
 
-				auto* task = SKSE::GetTaskInterface();
-				auto  equipManager = RE::ActorEquipManager::GetSingleton();
-				task->AddTask([=]() {
-					if (a_weapon->IsMagicItem())
-						equipManager->EquipSpell(a_actor, a_weapon->As<RE::SpellItem>(), slot);
-					else
-						equipManager->EquipObject(a_actor, a_weapon->As<RE::TESBoundObject>(), a_weapon->As<RE::ExtraDataList>(), 1, slot, true, false, true, true);
-				});
-				return;
-			}
+				return true;
+		}
+		return false;
+	}
+
+	static void equipLeftSlot(RE::Actor* a_actor, RE::TESForm* a_weapon)
+	{
+		if (a_weapon->IsMagicItem() || checkInventory(a_actor, a_weapon)) 
+		{
+			RE::BGSEquipSlot* slot;
+			if (a_weapon->IsArmor())
+				slot = shieldSlot;
+			else
+				slot = leftHandSlot;
+
+			auto* task = SKSE::GetTaskInterface();
+			auto  equipManager = RE::ActorEquipManager::GetSingleton();
+			task->AddTask([=]() {
+				if (a_weapon->IsMagicItem())
+					equipManager->EquipSpell(a_actor, a_weapon->As<RE::SpellItem>(), slot);
+				else
+					equipManager->EquipObject(a_actor, a_weapon->As<RE::TESBoundObject>(), a_weapon->As<RE::ExtraDataList>(), 1, slot, true, false, true, true);
+			});
 		}
 	}
 
@@ -645,6 +671,16 @@ namespace Events
 			eventHolder->AddEventSink(OnEquipEventHandler::GetSingleton());
 		}
 
+		static bool checkBoundWeaponSpell(RE::MagicItem* a_spell)
+		{
+			for (auto effect : a_spell->effects)
+			{
+				if (effect->baseEffect->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kBoundWeapon)
+					return true;
+			}
+			return false;
+		}
+
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>* ) override
 		{
 			if (!a_event || !a_event->actor || !a_event->actor->IsPlayerRef())
@@ -707,6 +743,13 @@ namespace Events
 					};
 				}
 			} else {
+				//unequipped bound spell on left hand
+				if (!leftHand && form->IsMagicItem() && checkBoundWeaponSpell(form->As<RE::MagicItem>())) 
+				{
+					lastBoundWeaponSpell = form->As<RE::MagicItem>();
+					return RE::BSEventNotifyControl::kContinue;
+				}
+
 				//unequipped main-hand weapon
 				if ((!rightHand || !leftHand) && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) 
 				{  
@@ -891,6 +934,29 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct BoundWeaponEquipObject
+	{
+		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* form, std::int64_t* a_spells, RE::BGSEquipSlot* a_equipSlot)
+		{
+
+			//dupe 2h equipslot for a 1h
+			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) 
+			{
+				auto effectAddr = reinterpret_cast<char*>(a_spells) - 0x98;  //BSTArray<SpellItem*> spells;  // 98
+				RE::ActiveEffect* a_activeEffect = (RE::ActiveEffect*)effectAddr;
+				if (a_activeEffect->castingSource == RE::MagicSystem::CastingSource::kLeftHand)
+					a_equipSlot = leftHandSlot;
+
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
+				func(a1, a_actor, form, a_spells, a_equipSlot);
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, form, true);
+				return;
+			}
+			return func(a1, a_actor, form, a_spells, a_equipSlot);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	static void install()
 	{
 		//getmeleedamage
@@ -913,8 +979,8 @@ namespace Hooks
 		REL::Relocation<std::uintptr_t> targetG{ RELOCATION_ID(37945, 38901) };  // - 670210	UnequipObject
 		stl::write_thunk_call<UnEquipObject>(targetG.address() + REL ::Relocate(0x138, 0x1b9));
 
-		//REL::Relocation<std::uintptr_t> targetG{ RELOCATION_ID(0, 38905) };  // - 670560	UnequipSpell
-		//stl::write_thunk_call<dupeEquipSlotB>(targetG.address() + 0xc2);
+		REL::Relocation<std::uintptr_t> targetF{ RELOCATION_ID(33455, 34229) };  // 545F80 - 66FD20	boundweaponequip
+		stl::write_thunk_call<BoundWeaponEquipObject>(targetF.address() + REL ::Relocate(0xba, 0xde));
 
 		
 		//dupeEquiptype hooks
