@@ -23,14 +23,15 @@ const int TWOHANDEDGRIPMODE = 1;
 const int ONEHANDEDGRIPMODE = 2;
 const int DUALWEILDGRIPMODE = 3;
 
-//int gripMode;
-
 std::uint16_t keyboardKey, keyboardMod, gamepadKey, gamepadMod;
 char*         reqPerkEditorID_1H;
 char*		  reqPerkEditorID_2H;
 RE::BGSPerk*  reqPerk1H;
 RE::BGSPerk*  reqPerk2H;
 
+float fCombatDistance;
+bool  bEnableNPC = true;
+bool  bPlaySounds = true;
 
 void loadIni()
 {
@@ -50,15 +51,15 @@ void loadIni()
 	s = (char*)ini.GetValue("settings", "sRequiredPerk2H", "");
 	reqPerkEditorID_2H = new char[strlen(s) + 1];
 	memcpy(reqPerkEditorID_2H, s, strlen(s) + 1);
+		
+	bPlaySounds = (uint16_t)ini.GetBoolValue("settings", "bPlaySounds", true);
+	bEnableNPC = (uint16_t)ini.GetBoolValue("settings", "bEnableNPC", false);
 }
 
 struct mainFunctions
 {
 	static void Hook()
 	{
-		//REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
-		//_CanProcessAttackBlock = AttackBlockHandlerVtbl.write_vfunc(0x1, CanProcessAttackBlock);
-
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
 
@@ -69,22 +70,110 @@ struct mainFunctions
 		_GetEquipState = StandardItemDataVtbl.write_vfunc(0x3, GetEquipState);
 
 		
-		//REL::Relocation<std::uintptr_t> CharacterVtbl{ RE::VTABLE_Character[2] };
-		//_NotifyAnimationGraph = CharacterVtbl.write_vfunc(0x1, NotifyAnimationGraph);
+		if (bEnableNPC) 
+		{
+			//REL::Relocation<std::uintptr_t> CharacterVtbl{ RE::VTABLE_Character[2] };
+			//_NotifyAnimationGraph = CharacterVtbl.write_vfunc(0x1, NotifyAnimationGraph);
 
-		//REL::Relocation<std::uintptr_t> HookTestVtbl{ RE::VTABLE_Character[0] };
-		//_HookTest = HookTestVtbl.write_vfunc(0xe4, UpdateCombat);
+			//REL::Relocation<std::uintptr_t> GetWeaponSlotVtbl{ RE::VTABLE_TESObjectWEAP[9] };
+			//_GetWeaponSlot = GetWeaponSlotVtbl.write_vfunc(0x4, GetWeaponSlot);
+
+			REL::Relocation<std::uintptr_t> HookTestVtbl{ RE::VTABLE_Character[0] };
+			_UpdateCombat = HookTestVtbl.write_vfunc(0xe4, UpdateCombat);
+		}
+	}
+
+	static RE::BGSEquipSlot* GetWeaponSlot(RE::BGSEquipType* a_this)
+	{
+		auto a_weaponAddr = reinterpret_cast<char*>(a_this) - 0xE0;  //BGSEquipType,               // 0E0
+		RE::TESObjectWEAP* a_weapon = (RE::TESObjectWEAP*)a_weaponAddr;
+		if (isTwoHanded(a_weapon))
+			return rightHandSlot;
+
+		return a_this->equipSlot;
+	}
+	static inline REL::Relocation<decltype(GetWeaponSlot)> _GetWeaponSlot;
+
+	static double getDistance(RE::NiPoint3 a, RE::NiPoint3 b)
+	{
+		return sqrt(pow(a.x - b.x, 2.0) + pow(a.y - b.y, 2.0) + pow(a.z - b.z, 2.0));
+	}
+
+	static float getAVPerc(RE::ActorPtr a_actor, RE::ActorValue a_value)
+	{
+		return a_actor->AsActorValueOwner()->GetActorValue(a_value) / a_actor->GetActorBase()->GetActorValue(a_value);
+	}
+
+	static bool getOffensiveStance(RE::CombatController* combatController)
+	{
+		auto state = combatController->state;
+		auto actor = combatController->actorHandle.get();
+		auto target = combatController->targetHandle.get();
+
+		if (!target)
+			return false;
+
+		auto rightHand = actor->GetEquippedObject(false);
+		auto leftHand = actor->GetEquippedObject(true);
+		if (!rightHand || !rightHand->IsWeapon() || !isOneHanded(rightHand->As<RE::TESObjectWEAP>()))
+			return false;
+		if (leftHand && leftHand->IsWeapon() && isOneHanded(rightHand->As<RE::TESObjectWEAP>()))
+			return false;
+
+		int chance = 0;
+
+		if (rightHand->As<RE::TESObjectWEAP>()->IsOneHandedDagger())
+			chance--;
+
+		if (!leftHand)
+			chance++;
+
+		if (getDistance(actor->GetPosition(), target->GetPosition()) < fCombatDistance * 1.5)
+			chance++;
+
+		bool tarStaggering;
+		target->GetGraphVariableBool("isStaggering", tarStaggering);
+		if (tarStaggering)
+			chance++;
+
+		if (getAVPerc(actor, RE::ActorValue::kStamina) < 0.40)
+			chance--;
+
+		if (getAVPerc(actor, RE::ActorValue::kHealth) < getAVPerc(target, RE::ActorValue::kHealth))
+			chance--;
+
+		if (getAVPerc(actor, RE::ActorValue::kHealth) > getAVPerc(target, RE::ActorValue::kHealth))
+			chance++;
+
+		if (state->confidenceModifier > 0.50)
+			chance++;
+
+		if (chance < 2)
+			return false;
+		return true;
 	}
 
 	static void UpdateCombat(RE::Character* a_this)
 	{
-		auto runTime = a_this->GetActorRuntimeData().combatController;
-		if (runTime) 
+		_UpdateCombat(a_this);
+		auto combatController = a_this->GetActorRuntimeData().combatController;
+		if (combatController) 
 		{
-			if (getCurrentGripMode(a_this) == 0)
-				gripSwitch(a_this);
+			auto gripMode = getCurrentGripMode(a_this);
+			switch (gripMode) 
+			{
+				case DEFAULTGRIPMODE:
+					if (getOffensiveStance(combatController))
+						gripSwitch(a_this);
+					break;
+				case TWOHANDEDGRIPMODE:
+					if (!getOffensiveStance(combatController))
+						gripSwitch(a_this);
+					break;
+				default:
+					break;
+			}
 		}
-		return _UpdateCombat(a_this);
 	}
 	static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
 
@@ -201,18 +290,6 @@ struct mainFunctions
 		setHandAnim(a_this, true);
 	}
 	static inline REL::Relocation<decltype(OnItemEquipped)> _OnItemEquipped;
-
-	static bool CanProcessAttackBlock(RE::AttackBlockHandler* a_this, RE::InputEvent* a_event)
-	{
-		auto player = RE::PlayerCharacter::GetSingleton();
-		auto s = a_event->QUserEvent();
-		if (player->AsActorState()->IsWeaponDrawn() && s == "GripSwitch" && !a_event->AsButtonEvent()->IsPressed() || inputHandler(a_event))
-			if (gripSwitch(player))
-				return false;
-
-		return _CanProcessAttackBlock(a_this, a_event);
-	}
-	static inline REL::Relocation<decltype(CanProcessAttackBlock)> _CanProcessAttackBlock;
 
 	static bool CanProcessShout(RE::ShoutHandler* a_this, RE::InputEvent* a_event)
 	{
@@ -447,7 +524,7 @@ struct mainFunctions
 		//auto player = RE::PlayerCharacter::GetSingleton();
 		a_actor->SetGraphVariableInt("iDynamicGripMode", mode);
 
-		if (bPlaySound) 
+		if (bPlaySound && bPlaySounds) 
 		{
 			if (mode == DEFAULTGRIPMODE)
 				playSound(a_actor, switchOut);
@@ -456,9 +533,9 @@ struct mainFunctions
 		}
 	}
 
-	static void playSound(RE::Actor* a, RE::BGSSoundDescriptorForm* a_descriptor)
+	static void playSound(RE::Actor* a_actor, RE::BGSSoundDescriptorForm* a_descriptor)
 	{
-		if (!a_descriptor)
+		if (!a_descriptor || !a_actor->Is3DLoaded())
 			return;
 
 		RE::BSSoundHandle handle;
@@ -466,7 +543,9 @@ struct mainFunctions
 		handle.assumeSuccess = false;
 		*(uint32_t*)&handle.state = 0;
 
-		handle.SetPosition(a->GetPosition());
+		handle.SetPosition(a_actor->GetPosition());
+
+		//handle.SetObjectToFollow(a_actor->Get3D());
 		handle.SetVolume(1);
 
 		auto sm = RE::BSAudioManager::GetSingleton();
@@ -495,7 +574,7 @@ struct mainFunctions
 			a_form = lastBoundWeaponSpell;
 
 		if (a_actor->IsPlayerRef() && a_form)
-			equipLeftSlot(a_actor, a_form);  //save previous left weapon/shield/spell even if empty if player
+			equipLeftSlot(a_actor, a_form);
 	}
 
 	static bool checkInventory(RE::Actor* a_actor, RE::TESForm* a_weapon)
@@ -683,7 +762,7 @@ namespace Events
 
 		RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>* ) override
 		{
-			if (!a_event || !a_event->actor || !a_event->actor->IsPlayerRef())
+			if (!a_event || !a_event->actor)// || !a_event->actor->IsPlayerRef())
 				return RE::BSEventNotifyControl::kContinue;
 
 			auto ui = RE::UI::GetSingleton();
@@ -693,21 +772,23 @@ namespace Events
 				invMenu.get()->GetRuntimeData().itemList->Update();
 			}
 
-			auto* player = RE::PlayerCharacter::GetSingleton();
-			auto rightHand = player->GetEquippedObject(false);
-			auto leftHand = player->GetEquippedObject(true);
+			//auto* a_actor = RE::PlayerCharacter::GetSingleton();
+			auto  a_actor = a_event->actor->As<RE::Actor>();
+
+			auto rightHand = a_actor->GetEquippedObject(false);
+			auto leftHand = a_actor->GetEquippedObject(true);
 
 			auto* form = RE::TESForm::LookupByID(a_event->baseObject);
-			int   gripMode = mainFunctions::getCurrentGripMode(player);
+			int   gripMode = mainFunctions::getCurrentGripMode(a_actor);
 
 			if (a_event->equipped) 
 			{
-				if (previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  //remove cached left-weapon to prevent duping
+				if (a_actor->IsPlayerRef() && previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  //remove cached left-weapon to prevent duping
 					previouLeftWeapon = nullptr;
 
 				if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && rightHand != leftHand) //unequip left hand if equipping a 2hander in right hand
 				{
-					mainFunctions::unequipLeftSlot(player, true, true);
+					mainFunctions::unequipLeftSlot(a_actor, true, true);
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
@@ -715,7 +796,7 @@ namespace Events
 				{
 					switch (gripMode) {
 						case TWOHANDEDGRIPMODE:  //main-hand base is 1H
-						mainFunctions::toggleGrip(player, DEFAULTGRIPMODE);
+						mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
 							break;
 
 						//case DEFAULTGRIPMODE:
@@ -723,7 +804,7 @@ namespace Events
 						//case DUALWEILDGRIPMODE:
 						default:
 							//equipped 2h in right hand
-							if (rightHand && rightHand->IsWeapon() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && mainFunctions::checkPerk(player, true)) 
+							if (rightHand && rightHand->IsWeapon() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && mainFunctions::checkPerk(a_actor, true)) 
 							{
 								if (leftHand) 
 								{
@@ -733,9 +814,9 @@ namespace Events
 										newGrip = DUALWEILDGRIPMODE;
 
 									if (gripMode == DEFAULTGRIPMODE)
-										player->NotifyAnimationGraph("GripSwitchEvent");
+										a_actor->NotifyAnimationGraph("GripSwitchEvent");
 
-									mainFunctions::toggleGrip(player, newGrip);
+									mainFunctions::toggleGrip(a_actor, newGrip);
 								}
 								return RE::BSEventNotifyControl::kContinue;
 							}
@@ -744,17 +825,22 @@ namespace Events
 				}
 			} else {
 				//unequipped bound spell on left hand
-				if (!leftHand && form->IsMagicItem() && checkBoundWeaponSpell(form->As<RE::MagicItem>())) 
+				if (a_actor->IsPlayerRef() && !leftHand && form->IsMagicItem() && checkBoundWeaponSpell(form->As<RE::MagicItem>())) 
 				{
 					lastBoundWeaponSpell = form->As<RE::MagicItem>();
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
-				//unequipped main-hand weapon
-				if ((!rightHand || !leftHand) && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) 
-				{  
-					player->NotifyAnimationGraph("GripSwitchEvent");
-					mainFunctions::toggleGrip(player, DEFAULTGRIPMODE);
+				if ((!rightHand || !leftHand) && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
+				{
+					a_actor->NotifyAnimationGraph("GripSwitchEvent");
+					mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
+
+					if (form->GetFormType() == RE::FormType::Scroll)//bandaid for a scroll-related bug
+					{
+						mainFunctions::setHandAnim(a_actor, false);
+						mainFunctions::setHandAnim(a_actor, true);
+					}
 				}
 			}
 			return RE::BSEventNotifyControl::kContinue;
@@ -848,18 +934,15 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct getMeleeDamage
-	{
-		static float thunk(std::int64_t* a1, RE::ActorValueOwner* a2, float damageMult, bool isBow)
-		{
-			float d = func(a1, a2, damageMult, isBow);
-			return d;
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
 	struct dupeEquipSlot
 	{
+		static bool twoHWeaponEquipChecks(RE::Actor* a_actor)
+		{
+			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true))
+				return true;
+			return false;
+		}
+
 		static void setEquipSlot(RE::TESObjectWEAP* a_weap, bool back = false)
 		{
 			if (!mainFunctions::isTwoHanded(a_weap))  //discard bow/xbow
@@ -889,7 +972,7 @@ namespace Hooks
 		{
 			auto form = (RE::TESForm*)*a3;
 			//dupe 2h equipslot for a 1h
-			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) {
+			if (twoHWeaponEquipChecks(a_actor)) {
 				
 				convertAllWeaponSlots(a_actor, form);
 				char result = func(a1, a_actor, a3, a4, a5);
@@ -904,16 +987,17 @@ namespace Hooks
 
 	struct EquipObject
 	{
-		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* form, std::int64_t* a4, int a5, std::int64_t* a6, char a7, char a8, char a9, char a10)
+		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* a4, int a5, std::int64_t* a6, char a7, char a8, char a9, char a10)
 		{
 			//dupe 2h equipslot for a 1h
-			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) {
-				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
-				func(a1, a_actor, form, a4, a5, a6, a7, a8, a9, a10);
-				dupeEquipSlot::convertAllWeaponSlots(a_actor, form, true);
+			if (dupeEquipSlot::twoHWeaponEquipChecks(a_actor)) 
+			{
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, a_form);
+				func(a1, a_actor, a_form, a4, a5, a6, a7, a8, a9, a10);
+				dupeEquipSlot::convertAllWeaponSlots(a_actor, a_form, true);
 				return;
 			}
-			return func(a1, a_actor, form, a4, a5, a6, a7, a8, a9, a10);
+			return func(a1, a_actor, a_form, a4, a5, a6, a7, a8, a9, a10);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -923,7 +1007,8 @@ namespace Hooks
 		static std::int64_t thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* form, std::int64_t* a4)
 		{
 			//dupe 2h equipslot for a 1h
-			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true)) {
+			if (dupeEquipSlot::twoHWeaponEquipChecks(a_actor)) 
+			{
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
 				std::int64_t a_result = func(a1, a_actor, form, a4);
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, form, true);
@@ -957,12 +1042,18 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct BlockNPCEquip
+	{
+		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* a4, int a5, std::int64_t* a6, char a7, char a8, char a9, char a10)
+		{
+			if (mainFunctions::getCurrentGripMode(a_actor) == DEFAULTGRIPMODE)
+				return func(a1, a_actor, a_form, a4, a5, a6, a7, a8, a9, a10);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+	
 	static void install()
 	{
-		//getmeleedamage
-		//REL::Relocation<std::uintptr_t> targetG{ RELOCATION_ID(0, 44001) };
-		//stl::write_thunk_call<getMeleeDamage>(targetG.address() + REL ::Relocate(0x0, 0x1a4));
-
 		//theres a bazillion weapon type verfications that prevent 2h weapons from being wielded as a 1hander
 		//maybe its a behavior issue but duping the weapon type just works too
 		//change weapon types
@@ -971,8 +1062,7 @@ namespace Hooks
 		
 		REL::Relocation<std::uintptr_t> targetE{ RELOCATION_ID(41743, 42824) };
 		stl::write_thunk_call<changeTypesBack>(targetE.address() + REL ::Relocate(0xf8, 0xf8));
-		
-		
+				
 		REL::Relocation<std::uintptr_t> targetH{ RELOCATION_ID(37938, 38894) };  // - 66fa20	EquipObject
 		stl::write_thunk_call<EquipObject>(targetH.address() + REL ::Relocate(0xe5, 0x170));
 
@@ -1013,6 +1103,14 @@ namespace Hooks
 		//favorites-menu getequiptype icondisplay	
 		REL::Relocation<std::uintptr_t> targetA{ RELOCATION_ID(50945, 51822) };  // - 8ccdd0
 		stl::write_thunk_call<getEquipTypeIconDisplay>(targetA.address() + REL ::Relocate(0x9b, 0x94));
+
+		
+		if (bEnableNPC) 
+		{
+			//NPC Equip hook
+			REL::Relocation<std::uintptr_t> targetI{ RELOCATION_ID(46955, 48124) };
+			stl::write_thunk_call<BlockNPCEquip>(targetI.address() + REL ::Relocate(0x1a5, 0x1d6));
+		}
 	}
 }
 
@@ -1035,10 +1133,9 @@ void Init()
 				twoHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f45, "Skyrim.esm");
 				leftHandSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x13f43, "Skyrim.esm");
 				shieldSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x141e8, "Skyrim.esm");
-				switchOut = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x3e62c, "Skyrim.esm");  //3c7c0
+				switchOut = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x810, "DynamicGrip.esp");  //3c7c0
 				switchIn = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x808, "DynamicGrip.esp");
 				dgSpell = dataHandler->LookupForm<RE::SpellItem>(0x80F, "DynamicGrip.esp");
-
 
 				if (strlen(reqPerkEditorID_1H) > 0)
 					reqPerk1H = RE::TESForm::LookupByEditorID<RE::BGSPerk>(reqPerkEditorID_1H);
@@ -1059,6 +1156,9 @@ void Init()
 						player->RemoveSpell(dgSpell);
 					player->AddSpell(dgSpell);
 				}
+
+				auto gameSettings = RE::GameSettingCollection::GetSingleton();
+				fCombatDistance = gameSettings->GetSetting("fCombatDistance")->GetFloat();
 
 				//player->GetGraphVariableInt("iDynamicGripMode", gripMode);
 				isSwitching = false;
