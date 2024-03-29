@@ -86,14 +86,15 @@ struct mainFunctions
 		}
 	}
 
-	static bool CanProcessSneak(RE::SneakHandler* a_this, RE::ButtonEvent* a_event, RE::PlayerControlsData* a_data)
+	static bool CanProcessSneak(RE::SneakHandler* , RE::ButtonEvent* , RE::PlayerControlsData* )
 	{
 		auto player = RE::PlayerCharacter::GetSingleton();
 		int  a;
 		player->GetGraphVariableInt("iLeftHandType", a);
 		player->GetGraphVariableInt("iRightHandType", a);
 
-		return _CanProcessSneak(a_this, a_event, a_data);
+		return false;
+		//return _CanProcessSneak(a_this, a_event, a_data);
 	}
 	static inline REL::Relocation<decltype(CanProcessSneak)> _CanProcessSneak;
 
@@ -101,8 +102,9 @@ struct mainFunctions
 	{
 		auto a_weaponAddr = reinterpret_cast<char*>(a_this) - 0xE0;  //BGSEquipType,               // 0E0
 		RE::TESObjectWEAP* a_weapon = (RE::TESObjectWEAP*)a_weaponAddr;
-		if (isTwoHanded(a_weapon))
+		if (isTwoHanded(a_weapon)) {
 			return rightHandSlot;
+		}
 
 		return a_this->equipSlot;
 	}
@@ -257,18 +259,18 @@ struct mainFunctions
 		return 11;
 	}
 
-	static void setHandAnim(RE::Actor* a_actor, bool left)
+	static void setHandAnim(RE::Actor* a_actor, bool left, std::string animVar)
 	{
-		RE::BSFixedString s = "iLeftHandType";
+		RE::BSFixedString s = "iLeftHand" + animVar;
 		if (!left)
-			s = "iRightHandType";
+			s = "iRightHand" + animVar;
 		a_actor->SetGraphVariableInt(s, getObjectType(a_actor->GetEquippedObject(left)));
 	}
 
-	static void setBothHandsAnim(RE::Actor* a_actor)
+	static void setBothHandsAnim(RE::Actor* a_actor, std::string animVar = "Type")
 	{
-		setHandAnim(a_actor, false);
-		setHandAnim(a_actor, true);
+		setHandAnim(a_actor, false, animVar);
+		setHandAnim(a_actor, true, animVar);
 	}
 
 	static void OnItemEquipped(RE::PlayerCharacter* a_this, bool anim)
@@ -276,6 +278,9 @@ struct mainFunctions
 		int gripMode = getCurrentGripMode(a_this);
 		if ((gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))  // && c== 1)
 		{
+			//set accurate values for iRightHandEquipped_DG/iLeftHandEquipped_DG Graphvars which hold the current drawn weapons type
+			mainFunctions::setBothHandsAnim(a_this, "Equipped_DG");
+
 			auto rightHand = a_this->GetEquippedObject(false);
 			auto leftHand = a_this->GetEquippedObject(true);
 
@@ -515,15 +520,23 @@ struct mainFunctions
 		}
 	}
 
-	static bool isOneHanded(RE::TESObjectWEAP* weap)
+	static bool isOneHanded(RE::TESForm* a_weap)
 	{
+		if (!a_weap || !a_weap->IsWeapon())
+			return false;
+
+		auto weap = a_weap->As<RE::TESObjectWEAP>();
 		if (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace())
 			return true;
 		return false;
 	}
 
-	static bool isTwoHanded(RE::TESObjectWEAP* weap)
+	static bool isTwoHanded(RE::TESForm* a_weap)
 	{
+		if (!a_weap || !a_weap->IsWeapon())
+			return false;
+
+		auto weap = a_weap->As<RE::TESObjectWEAP>();
 		if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe())
 			return true;
 		return false;
@@ -807,7 +820,7 @@ namespace Events
 					previouLeftWeapon = nullptr;
 
 				//unequip left hand if equipping a 2hander in right hand
-				if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && rightHand != leftHand) 
+				if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && rightHand != leftHand ) 
 				{
 					mainFunctions::unequipLeftSlot(a_actor, true, true);
 					return RE::BSEventNotifyControl::kContinue;
@@ -842,6 +855,7 @@ namespace Events
 										a_actor->NotifyAnimationGraph("GripSwitchEvent");
 
 									mainFunctions::toggleGrip(a_actor, newGrip);
+									a_actor->OnItemEquipped(false);
 								}
 								return RE::BSEventNotifyControl::kContinue;
 							}
@@ -935,8 +949,11 @@ namespace Hooks
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			int gripMode = mainFunctions::getCurrentGripMode(a_actor);
-			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) 
+			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
+
 				changeTypesFunction(a_actor);
+				
+			}
 
 			return func(a_actor, a1);
 		}
@@ -962,8 +979,10 @@ namespace Hooks
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			int gripMode = mainFunctions::getCurrentGripMode(a_actor);
-			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
+			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
 				changeTypesBackFunction(a_actor);
+
+			}
 
 			return func(a_actor, a1);
 		}
@@ -1004,36 +1023,40 @@ namespace Hooks
 				setEquipSlot(lH->As<RE::TESObjectWEAP>(), back);
 		}
 
-		static char thunk(std::int64_t* a1, RE::Actor* a_actor, std::int64_t* a3, RE::BGSEquipSlot* a4, char a5)
+		static char thunk(std::int64_t* a1, RE::Actor* a_actor, std::int64_t* a3, RE::BGSEquipSlot* a_equipSlot, char a5)
 		{
 			auto form = (RE::TESForm*)*a3;
 			//dupe 2h equipslot for a 1h
-			if (twoHWeaponEquipChecks(a_actor)) {
-				
+			if (twoHWeaponEquipChecks(a_actor)) 
+			{				
+				//prevent 2h in left-hand if main hander isnt a 2h
+				if (mainFunctions::isTwoHanded(form) && a_equipSlot == leftHandSlot && !mainFunctions::isTwoHanded(a_actor->GetEquippedObject(false)))
+					a_equipSlot = rightHandSlot;
+
 				convertAllWeaponSlots(a_actor, form);
-				char result = func(a1, a_actor, a3, a4, a5);
+				char result = func(a1, a_actor, a3, a_equipSlot, a5);
 				convertAllWeaponSlots(a_actor, form, true);
 				return result;
 			}
 
-			return func(a1, a_actor,a3,a4,a5);
+			return func(a1, a_actor, a3, a_equipSlot, a5);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
 	struct EquipObject
 	{
-		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* a4, int a5, std::int64_t* a6, char a7, char a8, char a9, char a10)
+		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* a4, int a5, std::int64_t* a_equipSlot, char a7, char a8, char a9, char a10)
 		{
 			//dupe 2h equipslot for a 1h
 			if (dupeEquipSlot::twoHWeaponEquipChecks(a_actor)) 
 			{
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, a_form);
-				func(a1, a_actor, a_form, a4, a5, a6, a7, a8, a9, a10);
+				func(a1, a_actor, a_form, a4, a5, a_equipSlot, a7, a8, a9, a10);
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, a_form, true);
 				return;
 			}
-			return func(a1, a_actor, a_form, a4, a5, a6, a7, a8, a9, a10);
+			return func(a1, a_actor, a_form, a4, a5, a_equipSlot, a7, a8, a9, a10);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1065,7 +1088,7 @@ namespace Hooks
 			{
 				auto effectAddr = reinterpret_cast<char*>(a_spells) - 0x98;  //BSTArray<SpellItem*> spells;  // 98
 				RE::ActiveEffect* a_activeEffect = (RE::ActiveEffect*)effectAddr;
-				if (a_activeEffect->castingSource == RE::MagicSystem::CastingSource::kLeftHand)
+				if (a_activeEffect->castingSource == RE::MagicSystem::CastingSource::kLeftHand && mainFunctions::isTwoHanded(a_actor->GetEquippedObject(false)))
 					a_equipSlot = leftHandSlot;
 
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, form);
