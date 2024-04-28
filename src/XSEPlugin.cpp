@@ -219,11 +219,11 @@ struct mainFunctions
 
 					auto player = RE::PlayerCharacter::GetSingleton();
 					auto rHand = player->GetEquippedObject(false);
-					auto rHandEntry = player->GetEquippedEntryData(false);
+					//auto rHandEntry = player->GetEquippedEntryData(false);
 					auto lHand = player->GetEquippedObject(true);
-					auto lHandEntry = player->GetEquippedEntryData(true);
+					//auto lHandEntry = player->GetEquippedEntryData(true);
 
-					if (a_result == 4 && rHand == lHand && rHandEntry == lHandEntry)
+					if (a_result == 4 && rHand == lHand)// && rHandEntry == lHandEntry)
 						return 4;
 
 					if (a_result == 4 && gripMode != DEFAULTGRIPMODE && eqObj->IsWeapon() && isTwoHanded(eqObj->As<RE::TESObjectWEAP>()))
@@ -911,10 +911,10 @@ namespace Hooks
 			{
 				int gripMode = mainFunctions::getCurrentGripMode(RE::PlayerCharacter::GetSingleton());
 				if (mainFunctions::isTwoHanded(form->As<RE::TESObjectWEAP>())) {
-					if (gripMode == DEFAULTGRIPMODE)
-							return (std::int64_t)twoHandType;
+					if (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)
+						return (std::int64_t)rightHandType;
 					else
-							return (std::int64_t)rightHandType;
+						return (std::int64_t)twoHandType;
 				}
 
 				if (mainFunctions::isOneHanded(form->As<RE::TESObjectWEAP>()) && (gripMode == TWOHANDEDGRIPMODE))
