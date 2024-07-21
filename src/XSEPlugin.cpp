@@ -873,7 +873,8 @@ namespace Events
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
-				if ((!rightHand || !leftHand) && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
+				//reset grip
+				if ((!rightHand || !leftHand) && gripMode != DEFAULTGRIPMODE)  // && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
 				{
 					a_actor->NotifyAnimationGraph("GripSwitchEvent");
 					mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
