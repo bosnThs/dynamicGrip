@@ -88,8 +88,13 @@ struct mainFunctions
 
 	static bool CanProcessSneak(RE::SneakHandler* , RE::ButtonEvent* , RE::PlayerControlsData* )
 	{
+		//debugging
 		auto player = RE::PlayerCharacter::GetSingleton();
-		int  a;
+		int  a = 1;
+		player->SetGraphVariableInt("iLeftHandType", a);
+		player->SetGraphVariableInt("iLeftHandEquipped", a);
+		player->SetGraphVariableInt("iRightHandType", a);
+		
 		player->GetGraphVariableInt("iLeftHandType", a);
 		player->GetGraphVariableInt("iRightHandType", a);
 
@@ -512,12 +517,11 @@ struct mainFunctions
 		{
 			if (!reqPerk2H || a_actor->HasPerk(reqPerk2H))
 				return true;
-			return false;
 		} else {
 			if (!reqPerk1H || a_actor->HasPerk(reqPerk1H))
 				return true;
-			return false;
 		}
+		return false;
 	}
 
 	static bool isOneHanded(RE::TESForm* a_weap)
@@ -848,14 +852,14 @@ namespace Events
 								{
 									int newGrip = ONEHANDEDGRIPMODE;
 
-									if (leftHand->IsWeapon())
+									if (leftHand->IsWeapon() && !leftHand->As<RE::TESObjectWEAP>()->IsStaff())
 										newGrip = DUALWEILDGRIPMODE;
 
 									if (gripMode == DEFAULTGRIPMODE)
 										a_actor->NotifyAnimationGraph("GripSwitchEvent");
 
 									mainFunctions::toggleGrip(a_actor, newGrip);
-									a_actor->OnItemEquipped(false);
+									//a_actor->OnItemEquipped(false);
 								}
 								return RE::BSEventNotifyControl::kContinue;
 							}
@@ -874,7 +878,7 @@ namespace Events
 				}
 
 				//reset grip
-				if ((!rightHand || !leftHand) && gripMode != DEFAULTGRIPMODE)  // && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
+				if ((!rightHand || !leftHand) && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
 				{
 					a_actor->NotifyAnimationGraph("GripSwitchEvent");
 					mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
@@ -882,6 +886,13 @@ namespace Events
 					//bandaid for a scroll-related bug
 					if (form->GetFormType() == RE::FormType::Scroll || form->GetFormType() == RE::FormType::Spell)	
 						mainFunctions::setBothHandsAnim(a_actor);
+				}
+
+				//reset grip if no weapons
+				if ((!rightHand && !leftHand) && gripMode != DEFAULTGRIPMODE)
+				{
+					a_actor->NotifyAnimationGraph("GripSwitchEvent");
+					mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
 				}
 			}
 			return RE::BSEventNotifyControl::kContinue;
