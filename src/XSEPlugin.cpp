@@ -62,11 +62,11 @@ struct mainFunctions
 	static void Hook()
 	{
 		//debug
-		REL::Relocation<std::uintptr_t> SneakHandlerVtbl{ RE::VTABLE_SneakHandler[0] };
-		_CanProcessSneak = SneakHandlerVtbl.write_vfunc(0x4, CanProcessSneak);
+		//REL::Relocation<std::uintptr_t> SneakHandlerVtbl{ RE::VTABLE_SneakHandler[0] };
+		//_CanProcessSneak = SneakHandlerVtbl.write_vfunc(0x4, CanProcessSneak);
 		
-		REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
-		_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
+		//REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
+		//_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
 
 		//REL::Relocation<std::uintptr_t> PlayerAnimCharacterVtbl{ RE::VTABLE_PlayerCharacter[2] };
 		//_PlayerNotifyAnimationGraph = PlayerAnimCharacterVtbl.write_vfunc(0x1, PlayerNotifyAnimationGraph);
