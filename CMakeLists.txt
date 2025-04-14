@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
 	dynamicGrip
-	VERSION 0.3.8
+	VERSION 0.4.9
 	LANGUAGES CXX
 )
 

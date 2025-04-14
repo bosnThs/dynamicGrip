@@ -1,14 +1,12 @@
 {
   "OutputFoldersPerTargetSystem": {
     "Local Machine": [
-      "build\\skyrim",
-      "build\\vr"
+      "build"
     ]
   },
   "ExpandedNodes": [
     "",
     "\\src"
   ],
-  "SelectedNode": "\\src\\XSEPlugin.cpp",
   "PreviewInSolutionExplorer": false
 }

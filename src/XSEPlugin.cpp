@@ -22,6 +22,7 @@ const int DEFAULTGRIPMODE = 0;
 const int TWOHANDEDGRIPMODE = 1;
 const int ONEHANDEDGRIPMODE = 2;
 const int DUALWEILDGRIPMODE = 3;
+const int MELEESTAFFGRIPMODE = 4;
 
 std::uint16_t keyboardKey, keyboardMod, gamepadKey, gamepadMod;
 char*         reqPerkEditorID_1H;
@@ -60,8 +61,16 @@ struct mainFunctions
 {
 	static void Hook()
 	{
-		//REL::Relocation<std::uintptr_t> SneakHandlerVtbl{ RE::VTABLE_SneakHandler[0] };
-		//_CanProcessSneak = SneakHandlerVtbl.write_vfunc(0x4, CanProcessSneak);
+		//debug
+		REL::Relocation<std::uintptr_t> SneakHandlerVtbl{ RE::VTABLE_SneakHandler[0] };
+		_CanProcessSneak = SneakHandlerVtbl.write_vfunc(0x4, CanProcessSneak);
+		
+		REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
+		_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
+
+		//REL::Relocation<std::uintptr_t> PlayerAnimCharacterVtbl{ RE::VTABLE_PlayerCharacter[2] };
+		//_PlayerNotifyAnimationGraph = PlayerAnimCharacterVtbl.write_vfunc(0x1, PlayerNotifyAnimationGraph);
+		//
 
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
@@ -72,7 +81,6 @@ struct mainFunctions
 		REL::Relocation<std::uintptr_t> StandardItemDataVtbl{ RE::VTABLE_StandardItemData[0] };
 		_GetEquipState = StandardItemDataVtbl.write_vfunc(0x3, GetEquipState);
 
-		
 		if (bEnableNPC) 
 		{
 			//REL::Relocation<std::uintptr_t> CharacterVtbl{ RE::VTABLE_Character[2] };
@@ -86,22 +94,101 @@ struct mainFunctions
 		}
 	}
 
-	static bool CanProcessSneak(RE::SneakHandler* , RE::ButtonEvent* , RE::PlayerControlsData* )
+
+	static void ProcessAttackBlockButton(RE::AttackBlockHandler* a_this, RE::ButtonEvent* a_event, RE::PlayerControlsData* a_data)
+	{		
+		auto player = RE::PlayerCharacter::GetSingleton();
+		int gripMode = getCurrentGripMode(player);
+
+		if (gripMode == MELEESTAFFGRIPMODE) {
+			auto staffEnchament = player->GetEquippedEntryData(false)->GetEnchantment();
+
+			if (staffEnchament) {
+				staffEnchament->data.spellType = RE::MagicSystem::SpellType::kEnchantment;
+				staffEnchament->data.castingType = RE::MagicSystem::CastingType::kFireAndForget;
+				staffEnchament->data.delivery = RE::MagicSystem::Delivery::kTouch;
+			}
+
+			_ProcessAttackBlockButton(a_this, a_event, a_data);
+
+			if (staffEnchament) {
+				staffEnchament->data.spellType = RE::MagicSystem::SpellType::kStaffEnchantment;
+			}
+			return;
+		}
+		
+		_ProcessAttackBlockButton(a_this, a_event, a_data);
+		
+	}
+	static inline REL::Relocation<decltype(ProcessAttackBlockButton)> _ProcessAttackBlockButton;
+
+	static bool CanProcessSneak(RE::SneakHandler* , RE::ButtonEvent* a_event, RE::PlayerControlsData* )
 	{
+		if (a_event->IsPressed())
+			return false;
+
+		
+
 		//debugging
 		auto player = RE::PlayerCharacter::GetSingleton();
-		int  a = 1;
+
+		
+		//setBothHandsAnim(player);
+
+		int a = 1;
+		//player->GetGraphVariableInt("iLeftHandType", a);
+		//player->GetGraphVariableInt("iRightHandType", a);
+		//player->GetGraphVariableInt("iRightHandEquipped", a);
+
+		a = 5;
 		player->SetGraphVariableInt("iLeftHandType", a);
 		player->SetGraphVariableInt("iLeftHandEquipped", a);
-		player->SetGraphVariableInt("iRightHandType", a);
-		
-		player->GetGraphVariableInt("iLeftHandType", a);
-		player->GetGraphVariableInt("iRightHandType", a);
+		//player->SetGraphVariableInt("iRightHandType", a);
+		//player->SetGraphVariableInt("iRightHandEquipped", a);
+		return false;
+
+		int gripMode = getCurrentGripMode(player);
+		if (gripMode == DEFAULTGRIPMODE) {
+			//player->NotifyAnimationGraph("GripSwitchEvent_MeleeStaff");
+			//player->NotifyAnimationGraph("WeapOutRightReplaceForceEquip");
+			//player->NotifyAnimationGraph("WeapEquip");
+
+			//auto weap = player->GetEquippedObject(false);
+			//weap->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+			//weap->As<RE::TESObjectWEAP>()->templateWeapon = nullptr;
+
+			toggleGrip(player, MELEESTAFFGRIPMODE, true);
+		} else {
+			toggleGrip(player, DEFAULTGRIPMODE, true);
+		}
+
+		player->OnItemEquipped(false);
 
 		return false;
 		//return _CanProcessSneak(a_this, a_event, a_data);
 	}
 	static inline REL::Relocation<decltype(CanProcessSneak)> _CanProcessSneak;
+
+	
+	static void PlayerNotifyAnimationGraph(RE::PlayerCharacter* a_this, const RE::BSFixedString& a_eventName)
+	{
+		if (a_eventName == "blockStart") {
+			//a_this is borked
+			auto player = RE::PlayerCharacter::GetSingleton();
+			int gripMode = getCurrentGripMode(player);
+
+			if (gripMode == MELEESTAFFGRIPMODE) {
+				auto staffEnchament = player->GetEquippedEntryData(false)->GetEnchantment();
+				if (staffEnchament) {
+					staffEnchament->data.spellType = RE::MagicSystem::SpellType::kStaffEnchantment;
+				}
+			}
+
+		}
+
+		return _PlayerNotifyAnimationGraph(a_this, a_eventName);
+	}
+	static inline REL::Relocation<decltype(PlayerNotifyAnimationGraph)> _PlayerNotifyAnimationGraph;
 
 	static RE::BGSEquipSlot* GetWeaponSlot(RE::BGSEquipType* a_this)
 	{
@@ -128,7 +215,7 @@ struct mainFunctions
 	static bool getOffensiveStance(RE::CombatController* combatController)
 	{
 		auto state = combatController->state;
-		auto actor = combatController->actorHandle.get();
+		auto actor = combatController->attackerHandle.get();
 		auto target = combatController->targetHandle.get();
 
 		if (!target)
@@ -200,8 +287,11 @@ struct mainFunctions
 
 	static void NotifyAnimationGraph(RE::Character* a_this, const RE::BSFixedString& a_eventName)
 	{
-		if (a_eventName == "changeGripMode")
-			gripSwitch(a_this);
+		//if (a_eventName == "changeGripMode")
+		//	gripSwitch(a_this);
+
+		if (a_eventName == "attackStart")
+			return _NotifyAnimationGraph(a_this, a_eventName);
 
 		return _NotifyAnimationGraph(a_this, a_eventName);
 	}
@@ -281,38 +371,64 @@ struct mainFunctions
 	static void OnItemEquipped(RE::PlayerCharacter* a_this, bool anim)
 	{
 		int gripMode = getCurrentGripMode(a_this);
-		if ((gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))  // && c== 1)
+		auto rightHand = a_this->GetEquippedObject(false);
+		auto leftHand = a_this->GetEquippedObject(true);
+
+		a_this->GetActorRuntimeData().currentProcess;
+
+		switch (gripMode) 
 		{
-			//set accurate values for iRightHandEquipped_DG/iLeftHandEquipped_DG Graphvars which hold the current drawn weapons type
-			mainFunctions::setBothHandsAnim(a_this, "Equipped_DG");
+			case ONEHANDEDGRIPMODE:
+			case DUALWEILDGRIPMODE:
+				//set accurate values for iRightHandEquipped_DG/iLeftHandEquipped_DG Graphvars which hold the current drawn weapons type
+				mainFunctions::setBothHandsAnim(a_this, "Equipped_DG");
 
-			auto rightHand = a_this->GetEquippedObject(false);
-			auto leftHand = a_this->GetEquippedObject(true);
+				if (rightHand && rightHand->IsWeapon()) {
+					originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
+					if (mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()))
+						rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+				}
 
-			if (rightHand && rightHand->IsWeapon()) {
-				originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
-				if (mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()))
-					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
-			}
+				if (leftHand && leftHand->IsWeapon() && rightHand && leftHand->GetFormID() != rightHand->GetFormID()) {
+					originalLeftWeapon = leftHand->As<RE::TESObjectWEAP>()->GetWeaponType();
+					if (mainFunctions::isTwoHanded(leftHand->As<RE::TESObjectWEAP>()))
+						leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+				}
 
-			if (leftHand && leftHand->IsWeapon() && rightHand && leftHand->GetFormID() != rightHand->GetFormID()) {
-				originalLeftWeapon = leftHand->As<RE::TESObjectWEAP>()->GetWeaponType();
-				if (mainFunctions::isTwoHanded(leftHand->As<RE::TESObjectWEAP>()))
-					leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
-			}
+				_OnItemEquipped(a_this, anim);
 
-			_OnItemEquipped(a_this, anim);
+				if (rightHand && rightHand->IsWeapon()) {
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
+				}
 
-			if (rightHand && rightHand->IsWeapon()) {
-				rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
-			}
+				if (leftHand && leftHand->IsWeapon() && rightHand && leftHand->GetFormID() != rightHand->GetFormID()) {
+					leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalLeftWeapon;
+				}
+				return;
 
-			if (leftHand && leftHand->IsWeapon() && rightHand && leftHand->GetFormID() != rightHand->GetFormID()) {
-				leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalLeftWeapon;
-			}
+			
+			case MELEESTAFFGRIPMODE:
 
-			return;
-		}
+				if (rightHand && rightHand->IsWeapon() && rightHand->As<RE::TESObjectWEAP>()->IsStaff()) {
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kTwoHandSword;
+					rightHand->As<RE::TESObjectWEAP>()->criticalData.effect = nullptr;
+					rightHand->As<RE::TESObjectWEAP>()->criticalData.damage = 13;
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.reach = 1.3;
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.speed = 1.6;
+					_OnItemEquipped(a_this, anim);
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kStaff;
+					return;
+				}
+
+				break;
+
+			default:
+				break;
+		};
+
+		
+		
+
 		_OnItemEquipped(a_this, anim);
 		//reset anim vars to the correct weapon types
 		//it just works
@@ -476,6 +592,16 @@ struct mainFunctions
 						newGrip = ONEHANDEDGRIPMODE;
 						//automatically equip a weapon in left hand
 						checkAndEquipLeft(a_actor, previouLeftWeapon);
+
+						//set right-hand animvar as 1h
+						if (!previouLeftWeapon) {
+							originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
+							rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+
+							setBothHandsAnim(a_actor);
+
+							rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
+						}
 					}
 					break;
 				case TWOHANDEDGRIPMODE:
@@ -490,6 +616,10 @@ struct mainFunctions
 				case DUALWEILDGRIPMODE:
 					//unequip left weapon
 					checkAndUnequipLeft(a_actor, leftHand, true);
+					//reset right-hand weapon anim var
+					if (!leftHand) {
+						setBothHandsAnim(a_actor);
+					}
 
 				default:
 					newGrip = DEFAULTGRIPMODE;
@@ -961,8 +1091,8 @@ namespace Hooks
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			int gripMode = mainFunctions::getCurrentGripMode(a_actor);
-			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
-
+			if (a_actor->IsPlayerRef())// && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
+			{
 				changeTypesFunction(a_actor);
 				
 			}
@@ -991,7 +1121,8 @@ namespace Hooks
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			int gripMode = mainFunctions::getCurrentGripMode(a_actor);
-			if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
+			if (a_actor->IsPlayerRef())// && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) 
+			{
 				changeTypesBackFunction(a_actor);
 
 			}
@@ -1005,7 +1136,7 @@ namespace Hooks
 	{
 		static bool twoHWeaponEquipChecks(RE::Actor* a_actor)
 		{
-			if (a_actor->IsPlayerRef() && mainFunctions::checkPerk(a_actor, true))
+			if (mainFunctions::checkPerk(a_actor, true) && a_actor->IsPlayerRef())
 				return true;
 			return false;
 		}
@@ -1185,7 +1316,7 @@ namespace Hooks
 	}
 }
 
-void Init()
+bool Load()
 {
 	loadIni();
 	mainFunctions::Hook();
@@ -1238,66 +1369,6 @@ void Init()
 			}
 		}
 	});
-}
 
-void InitializeLog()
-{
-#ifndef NDEBUG
-	auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
-#else
-	auto path = logger::log_directory();
-	if (!path) {
-		util::report_and_fail("Failed to find standard logging directory"sv);
-	}
-
-	*path /= fmt::format("{}.log"sv, Plugin::NAME);
-	auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-#endif
-
-#ifndef NDEBUG
-	const auto level = spdlog::level::trace;
-#else
-	const auto level = spdlog::level::info;
-#endif
-
-	auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
-	log->set_level(level);
-	log->flush_on(level);
-
-	spdlog::set_default_logger(std::move(log));
-	spdlog::set_pattern("[%l] %v"s);
-}
-
-EXTERN_C [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
-{
-#ifndef NDEBUG
-	while (!IsDebuggerPresent()) {};
-#endif
-
-	InitializeLog();
-
-	logger::info("Loaded plugin");
-
-	SKSE::Init(a_skse);
-
-	Init();
-
-	return true;
-}
-
-EXTERN_C [[maybe_unused]] __declspec(dllexport) constinit auto SKSEPlugin_Version = []() noexcept {
-	SKSE::PluginVersionData v;
-	v.PluginName(Plugin::NAME.data());
-	v.PluginVersion(Plugin::VERSION);
-	v.UsesAddressLibrary(true);
-	v.HasNoStructUse();
-	return v;
-}();
-
-EXTERN_C [[maybe_unused]] __declspec(dllexport) bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface*, SKSE::PluginInfo* pluginInfo)
-{
-	pluginInfo->name = SKSEPlugin_Version.pluginName;
-	pluginInfo->infoVersion = SKSE::PluginInfo::kVersion;
-	pluginInfo->version = SKSEPlugin_Version.pluginVersion;
 	return true;
 }
