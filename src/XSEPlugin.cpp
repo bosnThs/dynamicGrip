@@ -18,11 +18,17 @@ RE::MagicItem* lastBoundWeaponSpell;
 RE::WEAPON_TYPE originalRightWeapon;
 RE::WEAPON_TYPE originalLeftWeapon;
 
+RE::BSTArray<RE::Effect*> weaponEnchantEffects;
+float fMeleeStaffDamage;
+float fMeleeStaffSpeed;
+
 const int DEFAULTGRIPMODE = 0;
 const int TWOHANDEDGRIPMODE = 1;
 const int ONEHANDEDGRIPMODE = 2;
 const int DUALWEILDGRIPMODE = 3;
 const int MELEESTAFFGRIPMODE = 4;
+const int MELEESTAFFGRIPMODE_2H = 5;
+const int MELEESTAFFGRIPMODE_DW = 6;
 
 std::uint16_t keyboardKey, keyboardMod, gamepadKey, gamepadMod;
 char*         reqPerkEditorID_1H;
@@ -32,7 +38,8 @@ RE::BGSPerk*  reqPerk2H;
 
 float fCombatDistance;
 bool  bEnableNPC = true;
-bool  bPlaySounds = true;
+bool bPlaySounds = true;
+bool bMeleeStaffEnchants = true;
 
 void loadIni()
 {
@@ -55,6 +62,10 @@ void loadIni()
 		
 	bPlaySounds = (uint16_t)ini.GetBoolValue("settings", "bPlaySounds", true);
 	bEnableNPC = (uint16_t)ini.GetBoolValue("settings", "bEnableNPC", false);
+	bMeleeStaffEnchants = (uint16_t)ini.GetBoolValue("settings", "bMeleeStaffEnchants", false);
+	
+	fMeleeStaffDamage = (float)ini.GetDoubleValue("settings", "fMeleeStaffDamage", 13);
+	fMeleeStaffSpeed = (float)ini.GetDoubleValue("settings", "fMeleeStaffSpeed", 1.6);
 }
 
 struct mainFunctions
@@ -64,13 +75,15 @@ struct mainFunctions
 		//debug
 		//REL::Relocation<std::uintptr_t> SneakHandlerVtbl{ RE::VTABLE_SneakHandler[0] };
 		//_CanProcessSneak = SneakHandlerVtbl.write_vfunc(0x4, CanProcessSneak);
-		
-		//REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
-		//_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
-
-		//REL::Relocation<std::uintptr_t> PlayerAnimCharacterVtbl{ RE::VTABLE_PlayerCharacter[2] };
-		//_PlayerNotifyAnimationGraph = PlayerAnimCharacterVtbl.write_vfunc(0x1, PlayerNotifyAnimationGraph);
+		// 
+		// 
 		//
+
+		REL::Relocation<std::uintptr_t> PlayerAnimCharacterVtbl{ RE::VTABLE_PlayerCharacter[2] };
+		_PlayerNotifyAnimationGraph = PlayerAnimCharacterVtbl.write_vfunc(0x1, PlayerNotifyAnimationGraph);
+
+		REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
+		_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
 
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
@@ -94,31 +107,34 @@ struct mainFunctions
 		}
 	}
 
-
 	static void ProcessAttackBlockButton(RE::AttackBlockHandler* a_this, RE::ButtonEvent* a_event, RE::PlayerControlsData* a_data)
 	{		
 		auto player = RE::PlayerCharacter::GetSingleton();
 		int gripMode = getCurrentGripMode(player);
 
-		if (gripMode == MELEESTAFFGRIPMODE) {
+		if (gripMode == MELEESTAFFGRIPMODE && player->GetEquippedEntryData(false)) {
 			auto staffEnchament = player->GetEquippedEntryData(false)->GetEnchantment();
 
 			if (staffEnchament) {
+				auto spellType = staffEnchament->data.spellType;
+				auto castingType = staffEnchament->data.castingType;
+				auto delivery = staffEnchament->data.delivery;
+				auto chargeTime = staffEnchament->data.chargeTime;
+
 				staffEnchament->data.spellType = RE::MagicSystem::SpellType::kEnchantment;
 				staffEnchament->data.castingType = RE::MagicSystem::CastingType::kFireAndForget;
 				staffEnchament->data.delivery = RE::MagicSystem::Delivery::kTouch;
-			}
+				
+				_ProcessAttackBlockButton(a_this, a_event, a_data);
 
-			_ProcessAttackBlockButton(a_this, a_event, a_data);
-
-			if (staffEnchament) {
-				staffEnchament->data.spellType = RE::MagicSystem::SpellType::kStaffEnchantment;
+				staffEnchament->data.spellType = spellType;
+				staffEnchament->data.castingType = castingType;
+				staffEnchament->data.delivery = delivery;
+					
+				return;
 			}
-			return;
-		}
-		
-		_ProcessAttackBlockButton(a_this, a_event, a_data);
-		
+		}		
+		_ProcessAttackBlockButton(a_this, a_event, a_data);		
 	}
 	static inline REL::Relocation<decltype(ProcessAttackBlockButton)> _ProcessAttackBlockButton;
 
@@ -136,13 +152,14 @@ struct mainFunctions
 		//setBothHandsAnim(player);
 
 		int a = 1;
-		//player->GetGraphVariableInt("iLeftHandType", a);
-		//player->GetGraphVariableInt("iRightHandType", a);
-		//player->GetGraphVariableInt("iRightHandEquipped", a);
+		player->GetGraphVariableInt("iLeftHandType", a);
+		player->GetGraphVariableInt("iRightHandType", a);
+		player->GetGraphVariableInt("iLeftHandEquipped", a);
+		player->GetGraphVariableInt("iRightHandEquipped", a);
 
 		a = 5;
-		player->SetGraphVariableInt("iLeftHandType", a);
-		player->SetGraphVariableInt("iLeftHandEquipped", a);
+		//player->SetGraphVariableInt("iLeftHandType", a);
+		//player->SetGraphVariableInt("iLeftHandEquipped", a);
 		//player->SetGraphVariableInt("iRightHandType", a);
 		//player->SetGraphVariableInt("iRightHandEquipped", a);
 		return false;
@@ -172,18 +189,18 @@ struct mainFunctions
 	
 	static void PlayerNotifyAnimationGraph(RE::PlayerCharacter* a_this, const RE::BSFixedString& a_eventName)
 	{
-		if (a_eventName == "blockStart") {
+		if (a_eventName == "attackStop") {
 			//a_this is borked
 			auto player = RE::PlayerCharacter::GetSingleton();
 			int gripMode = getCurrentGripMode(player);
 
-			if (gripMode == MELEESTAFFGRIPMODE) {
+			if (gripMode == MELEESTAFFGRIPMODE && player->GetEquippedEntryData(false)) {
 				auto staffEnchament = player->GetEquippedEntryData(false)->GetEnchantment();
 				if (staffEnchament) {
-					staffEnchament->data.spellType = RE::MagicSystem::SpellType::kStaffEnchantment;
+					if (player->IsCasting(staffEnchament)  && staffEnchament->data.castingType == RE::MagicSystem::CastingType::kConcentration)
+						player->InterruptCast(true);
 				}
 			}
-
 		}
 
 		return _PlayerNotifyAnimationGraph(a_this, a_eventName);
@@ -253,7 +270,7 @@ struct mainFunctions
 		if (getAVPerc(actor, RE::ActorValue::kHealth) > getAVPerc(target, RE::ActorValue::kHealth))
 			chance++;
 
-		if (state->confidenceModifier > 0.50)
+		if (state->confidenceModifier > 0.50)	//i dunno lol
 			chance++;
 
 		if (chance < 2)
@@ -309,7 +326,7 @@ struct mainFunctions
 				{
 
 					int gripMode = mainFunctions::getCurrentGripMode(RE::PlayerCharacter::GetSingleton());
-					if (gripMode == TWOHANDEDGRIPMODE)
+					if (gripMode == TWOHANDEDGRIPMODE || gripMode == MELEESTAFFGRIPMODE)
 						return 4;
 
 					auto player = RE::PlayerCharacter::GetSingleton();
@@ -330,7 +347,7 @@ struct mainFunctions
 	}
 	static inline REL::Relocation<decltype(GetEquipState)> _GetEquipState;
 
-	static int getObjectType(RE::TESForm* form)
+	static int getObjectType(RE::Actor* a_actor, RE::TESForm* form)
 	{
 		if (!form)
 			return 0;
@@ -339,6 +356,7 @@ struct mainFunctions
 		{
 			if (form->As<RE::TESObjectWEAP>()->IsCrossbow())
 				return 12;		//xbow type is 9 same as spells but graph vars use the value 12
+
 			return (int)form->As<RE::TESObjectWEAP>()->GetWeaponType();
 		}
 
@@ -359,7 +377,7 @@ struct mainFunctions
 		RE::BSFixedString s = "iLeftHand" + animVar;
 		if (!left)
 			s = "iRightHand" + animVar;
-		a_actor->SetGraphVariableInt(s, getObjectType(a_actor->GetEquippedObject(left)));
+		a_actor->SetGraphVariableInt(s, getObjectType(a_actor, a_actor->GetEquippedObject(left)));
 	}
 
 	static void setBothHandsAnim(RE::Actor* a_actor, std::string animVar = "Type")
@@ -408,15 +426,19 @@ struct mainFunctions
 
 			
 			case MELEESTAFFGRIPMODE:
+			case MELEESTAFFGRIPMODE_2H:
+			case MELEESTAFFGRIPMODE_DW:
 
 				if (rightHand && rightHand->IsWeapon() && rightHand->As<RE::TESObjectWEAP>()->IsStaff()) {
-					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kTwoHandSword;
-					rightHand->As<RE::TESObjectWEAP>()->criticalData.effect = nullptr;
-					rightHand->As<RE::TESObjectWEAP>()->criticalData.damage = 13;
+
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kTwoHandAxe;
+					auto cd = rightHand->As<RE::TESObjectWEAP>()->attackDamage = fMeleeStaffDamage;					
+					rightHand->As<RE::TESObjectWEAP>()->criticalData.damage = 7;
 					rightHand->As<RE::TESObjectWEAP>()->weaponData.reach = 1.3;
-					rightHand->As<RE::TESObjectWEAP>()->weaponData.speed = 1.6;
+					rightHand->As<RE::TESObjectWEAP>()->weaponData.speed = fMeleeStaffSpeed;
 					_OnItemEquipped(a_this, anim);
 					rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kStaff;
+
 					return;
 				}
 
@@ -425,9 +447,6 @@ struct mainFunctions
 			default:
 				break;
 		};
-
-		
-		
 
 		_OnItemEquipped(a_this, anim);
 		//reset anim vars to the correct weapon types
@@ -567,8 +586,9 @@ struct mainFunctions
 			auto rightHand = a_actor->GetEquippedObject(false);
 			auto leftHand = a_actor->GetEquippedObject(true);
 
+			bool forceEquipEvent = false;
 			//only viable weapons to grip switch
-			if (rightHand && rightHand->IsWeapon() && canSwitch(rightHand->As<RE::TESObjectWEAP>())) {
+			if (rightHand && rightHand->IsWeapon() && canSwitch(rightHand->As<RE::TESObjectWEAP>(), a_actor)) {
 				auto rightWeapon = rightHand->As<RE::TESObjectWEAP>();
 
 				isSwitching = true;
@@ -583,8 +603,10 @@ struct mainFunctions
 
 						//unequip left weapon
 						checkAndUnequipLeft(a_actor, leftHand, true);
-
-					} else {
+						break;
+					} 
+					if (isTwoHanded(rightWeapon))
+					{
 						if (!checkPerk(a_actor, true))
 							return false;
 
@@ -602,16 +624,32 @@ struct mainFunctions
 
 							rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
 						}
+					} else {
+						//is staff
+						if (!checkPerk(a_actor, false))
+							return false;
+												
+						//melee staff grip mode
+						newGrip = MELEESTAFFGRIPMODE;
+
+						forceEquipEvent = true;
+						if (leftHand)
+							forceEquipEvent = false;
+						
+						//unequip left weapon
+						checkAndUnequipLeft(a_actor, leftHand, true);
 					}
 					break;
+
+				case MELEESTAFFGRIPMODE:
+					forceEquipEvent = true;
 				case TWOHANDEDGRIPMODE:
 					//requip previous leftHand weapon
 					newGrip = DEFAULTGRIPMODE;
 
 					checkAndEquipLeft(a_actor, previouLeftWeapon);
-
-
 					break;
+
 				case ONEHANDEDGRIPMODE:
 				case DUALWEILDGRIPMODE:
 					//unequip left weapon
@@ -629,14 +667,17 @@ struct mainFunctions
 				a_actor->NotifyAnimationGraph("GripSwitchEvent");
 				isSwitching = false;
 				toggleGrip(a_actor, newGrip, true);
+
+				if (forceEquipEvent)	//equip event for staff functionality	
+					a_actor->OnItemEquipped(false);
 			}
 		}
 		return true;
 	}
 
-	static bool canSwitch(RE::TESObjectWEAP* weap)
+	static bool canSwitch(RE::TESObjectWEAP* weap, RE::Actor* a_actor)
 	{
-		if (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace() || weap->IsTwoHandedSword() || weap->IsTwoHandedAxe())
+		if (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace() || weap->IsTwoHandedSword() || weap->IsTwoHandedAxe() || (weap->IsStaff() && a_actor->IsPlayerRef()))  //restrict grip switching staves to player
 			return true;
 		return false;
 	}
@@ -833,6 +874,7 @@ struct mainFunctions
 			return;
 		}
 	}
+
 };
 
 namespace controlMap
@@ -947,7 +989,7 @@ namespace Events
 			auto* form = RE::TESForm::LookupByID(a_event->baseObject);
 			int   gripMode = mainFunctions::getCurrentGripMode(a_actor);
 
-			if (a_event->equipped) 
+			if (a_event->equipped)
 			{
 				//remove cached left-weapon to prevent duping
 				if (a_actor->IsPlayerRef() && previouLeftWeapon && previouLeftWeapon->GetFormID() == form->GetFormID())  
@@ -963,9 +1005,10 @@ namespace Events
 				if (leftHand && leftHand->GetFormID() == form->GetFormID() || rightHand && rightHand->GetFormID() == form->GetFormID()) 
 				{
 					switch (gripMode) {
+						case MELEESTAFFGRIPMODE:
 						case TWOHANDEDGRIPMODE:  //main-hand base is 1H
-						mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
-							break;
+							mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
+								break;
 
 						//case DEFAULTGRIPMODE:
 						//case ONEHANDEDGRIPMODE:
@@ -989,7 +1032,12 @@ namespace Events
 										a_actor->NotifyAnimationGraph("GripSwitchEvent");
 
 									mainFunctions::toggleGrip(a_actor, newGrip);
-									//a_actor->OnItemEquipped(false);
+									originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
+									rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+
+									mainFunctions::setBothHandsAnim(a_actor);
+
+									rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
 								}
 								return RE::BSEventNotifyControl::kContinue;
 							}
@@ -997,6 +1045,8 @@ namespace Events
 					};
 				}
 			} else {
+				//unequip event
+
 				if (form->GetFormType() == RE::FormType::Enchantment || mainFunctions::checkBoundWeapon(form))
 					return RE::BSEventNotifyControl::kContinue;
 
@@ -1052,6 +1102,7 @@ namespace Hooks
 			if (form && form->IsWeapon()) 
 			{
 				int gripMode = mainFunctions::getCurrentGripMode(RE::PlayerCharacter::GetSingleton());
+				/*
 				if (mainFunctions::isTwoHanded(form->As<RE::TESObjectWEAP>())) {
 					if (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)
 						return (std::int64_t)rightHandType;
@@ -1059,8 +1110,15 @@ namespace Hooks
 						return (std::int64_t)twoHandType;
 				}
 
-				if (mainFunctions::isOneHanded(form->As<RE::TESObjectWEAP>()) && (gripMode == TWOHANDEDGRIPMODE))
+				if (mainFunctions::isOneHanded(form->As<RE::TESObjectWEAP>()) && (gripMode == TWOHANDEDGRIPMODE || gripMode == MELEESTAFFGRIPMODE))
 					return (std::int64_t)twoHandType;
+					*/
+				if (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)
+					return (std::int64_t)rightHandType;
+				if (gripMode == TWOHANDEDGRIPMODE || gripMode == MELEESTAFFGRIPMODE)
+					return (std::int64_t)twoHandType;
+
+
 			}
 			return func(form);
 		}
@@ -1253,6 +1311,39 @@ namespace Hooks
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	struct getPlayerActorAV
+	{
+		static void thunk(RE::MagicItem* a_magicItem, RE::Actor* a_actor)
+		{
+			if (a_actor->IsPlayerRef() && a_actor->GetEquippedEntryData(false)) {
+				auto staffEnchament = a_actor->GetEquippedEntryData(false)->GetEnchantment();
+				if (mainFunctions::getCurrentGripMode(a_actor) == MELEESTAFFGRIPMODE && staffEnchament && staffEnchament == a_magicItem && a_actor->IsCasting(a_magicItem) && staffEnchament->data.castingType != RE::MagicSystem::CastingType::kConcentration)		//concentration staff enchants already drain weapon charges
+				{
+					a_actor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kRightItemCharge, a_magicItem->GetData()->costOverride * -1.5);
+				}
+			}
+			return func(a_magicItem, a_actor);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct sub_1405BBD40
+	{
+		static bool thunk(RE::ActorMagicCaster* a_actorMagiCaster, std::uint32_t* a_arg2, bool a_bool)
+		{
+			auto a_actor = a_actorMagiCaster->actor;
+			auto currentSpell = a_actorMagiCaster->currentSpell;
+			if (a_actor->IsPlayerRef() && a_actor->GetEquippedEntryData(false) && currentSpell && mainFunctions::getCurrentGripMode(a_actor) == MELEESTAFFGRIPMODE) {
+				auto staffEnchant = a_actor->GetEquippedEntryData(false)->GetEnchantment();
+				if (staffEnchant && staffEnchant == currentSpell) {
+					return false;
+				}
+			}
+			return func(a_actorMagiCaster, a_arg2, a_bool);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 	
 	static void install()
 	{
@@ -1313,6 +1404,17 @@ namespace Hooks
 			REL::Relocation<std::uintptr_t> targetI{ RELOCATION_ID(46955, 48124) };
 			stl::write_thunk_call<BlockNPCEquip>(targetI.address() + REL ::Relocate(0x1a5, 0x1d6));
 		}
+
+		if (bMeleeStaffEnchants) {
+			//get actor value for cast
+			REL::Relocation<std::uintptr_t> targetJ{ RELOCATION_ID(33364, 34145) };
+			stl::write_thunk_call<getPlayerActorAV>(targetJ.address() + REL ::Relocate(0xd7, 0xd4));
+		} else {
+			//disables staff enchants from proccing
+			REL::Relocation<std::uintptr_t> targetH{ RELOCATION_ID(33631, 34409) };
+			stl::write_thunk_call<sub_1405BBD40>(targetH.address() + REL ::Relocate(0x119, 0x138));
+		}
+
 	}
 }
 
@@ -1366,6 +1468,7 @@ bool Load()
 				isSwitching = false;
 				isQueuedGripSwitch = false;
 				previouLeftWeapon = nullptr;
+				weaponEnchantEffects = RE::BSTArray<RE::Effect*>();
 			}
 		}
 	});
