@@ -12,6 +12,8 @@ RE::BGSEquipSlot* twoHandSlot;
 RE::SpellItem*    dgSpell;
 RE::BGSSoundDescriptorForm* switchIn;
 RE::BGSSoundDescriptorForm* switchOut;
+RE::BGSSoundDescriptorForm* switchIn0900;
+RE::BGSSoundDescriptorForm* switchOut0900;
 
 RE::MagicItem* lastBoundWeaponSpell;
 
@@ -392,7 +394,7 @@ struct mainFunctions
 		auto rightHand = a_this->GetEquippedObject(false);
 		auto leftHand = a_this->GetEquippedObject(true);
 
-		a_this->GetActorRuntimeData().currentProcess;
+		//a_this->GetActorRuntimeData().currentProcess;
 
 		switch (gripMode) 
 		{
@@ -448,7 +450,9 @@ struct mainFunctions
 				break;
 		};
 
+
 		_OnItemEquipped(a_this, anim);
+
 		//reset anim vars to the correct weapon types
 		//it just works
 		setBothHandsAnim(a_this);
@@ -726,18 +730,28 @@ struct mainFunctions
 
 	static void toggleGrip(RE::Actor* a_actor, int mode, bool bPlaySound = false)
 	{
-		//gripMode = mode;
-
-		//auto player = RE::PlayerCharacter::GetSingleton();
 		a_actor->SetGraphVariableInt("iDynamicGripMode", mode);
+		auto player = RE::PlayerCharacter::GetSingleton();
+		RE::BGSSoundDescriptorForm* a_soundD = switchIn;
 
-		if (bPlaySound && bPlaySounds) 
+		
+		if (!bPlaySound || !bPlaySounds)
+			return;
+
+		if (mode == DEFAULTGRIPMODE) 
+		{
+			a_soundD = switchOut;
+		}
+
+		if (!a_actor->IsPlayerRef() && a_actor->GetPosition().GetDistance(player->GetPosition()) > 100)
 		{
 			if (mode == DEFAULTGRIPMODE)
-				playSound(a_actor, switchOut);
+				a_soundD = switchOut0900;
 			else
-				playSound(a_actor, switchIn);
+				a_soundD = switchIn0900;
 		}
+
+		playSound(a_actor, a_soundD);
 	}
 
 	static void playSound(RE::Actor* a_actor, RE::BGSSoundDescriptorForm* a_descriptor)
@@ -750,9 +764,8 @@ struct mainFunctions
 		handle.assumeSuccess = false;
 		*(uint32_t*)&handle.state = 0;
 
-		//handle.SetPosition(a_actor->GetPosition());
-
 		handle.SetObjectToFollow(a_actor->Get3D());
+		//handle.SetPosition(a_actor->GetPosition());
 		handle.SetVolume(1);
 
 		auto sm = RE::BSAudioManager::GetSingleton();
@@ -1439,6 +1452,8 @@ bool Load()
 				shieldSlot = dataHandler->LookupForm<RE::BGSEquipSlot>(0x141e8, "Skyrim.esm");
 				switchOut = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x810, "DynamicGrip.esp");  //3c7c0
 				switchIn = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x808, "DynamicGrip.esp");
+				switchOut0900 = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x814, "DynamicGrip.esp");  //3c7c0
+				switchIn0900 = dataHandler->LookupForm<RE::BGSSoundDescriptorForm>(0x813, "DynamicGrip.esp");
 				dgSpell = dataHandler->LookupForm<RE::SpellItem>(0x80F, "DynamicGrip.esp");
 
 				if (strlen(reqPerkEditorID_1H) > 0)
