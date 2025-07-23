@@ -87,6 +87,7 @@ struct mainFunctions
 		REL::Relocation<std::uintptr_t> AttackBlockHandlerVtbl{ RE::VTABLE_AttackBlockHandler[0] };
 		_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
 
+		REL::Relocation<std::uintptr_t> ReadyWeaponHandlerVtbl{ RE::VTABLE_ReadyWeaponHandler[0] };
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
 
@@ -108,6 +109,7 @@ struct mainFunctions
 			_UpdateCombat = HookTestVtbl.write_vfunc(0xe4, UpdateCombat);
 		}
 	}
+	static void ProcessReadyWeaponButton(RE::ReadyWeaponHandler* a_this, RE::PlayerControlsData* a_data)
 
 	static void ProcessAttackBlockButton(RE::AttackBlockHandler* a_this, RE::ButtonEvent* a_event, RE::PlayerControlsData* a_data)
 	{		
