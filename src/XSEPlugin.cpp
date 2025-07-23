@@ -88,6 +88,8 @@ struct mainFunctions
 		_ProcessAttackBlockButton = AttackBlockHandlerVtbl.write_vfunc(0x4, ProcessAttackBlockButton);
 
 		REL::Relocation<std::uintptr_t> ReadyWeaponHandlerVtbl{ RE::VTABLE_ReadyWeaponHandler[0] };
+		_ProcessReadyWeaponButton = ReadyWeaponHandlerVtbl.write_vfunc(0x4, ProcessReadyWeaponButton);
+
 		REL::Relocation<std::uintptr_t> ShoutHandlerVtbl{ RE::VTABLE_ShoutHandler[0] };
 		_CanProcessShout = ShoutHandlerVtbl.write_vfunc(0x1, CanProcessShout);
 
@@ -110,6 +112,18 @@ struct mainFunctions
 		}
 	}
 	static void ProcessReadyWeaponButton(RE::ReadyWeaponHandler* a_this, RE::PlayerControlsData* a_data)
+	{
+		auto player = RE::PlayerCharacter::GetSingleton();
+		int gripMode = getCurrentGripMode(player);
+		if (gripMode == MELEESTAFFGRIPMODE)
+		{
+			toggleGrip(player, DEFAULTGRIPMODE, false);
+			player->OnItemEquipped(false);
+		}
+
+		_ProcessReadyWeaponButton(a_this, a_data);
+	}
+	static inline REL::Relocation<decltype(ProcessReadyWeaponButton)> _ProcessReadyWeaponButton;
 
 	static void ProcessAttackBlockButton(RE::AttackBlockHandler* a_this, RE::ButtonEvent* a_event, RE::PlayerControlsData* a_data)
 	{		
