@@ -44,7 +44,7 @@ bool  bEnableNPC = true;
 bool bPlaySounds = true;
 bool bMeleeStaffEnchants = true;
 
-bool iWSDll = false;
+bool IWSdll = false;
 
 void loadIni()
 {
@@ -178,7 +178,8 @@ struct mainFunctions
 		player->GetGraphVariableInt("iRightHandType", a);
 		player->GetGraphVariableInt("iLeftHandEquipped", a);
 		player->GetGraphVariableInt("iRightHandEquipped", a);
-
+		player->GetGraphVariableInt("iLeftHandEquipped_DG", a);
+		player->GetGraphVariableInt("iRightHandEquipped_DG", a);
 		a = 5;
 		//player->SetGraphVariableInt("iLeftHandType", a);
 		//player->SetGraphVariableInt("iLeftHandEquipped", a);
@@ -370,15 +371,21 @@ struct mainFunctions
 	}
 	static inline REL::Relocation<decltype(GetEquipState)> _GetEquipState;
 
-	static int getObjectType( RE::TESForm* form)
+	static int getObjectType( RE::TESForm* form, int a_gripMode)
 	{
 		if (!form)
 			return 0;
 
 		if (form->IsWeapon())
 		{
+			if ((form->As<RE::TESObjectWEAP>()->IsTwoHandedSword() || form->As<RE::TESObjectWEAP>()->IsTwoHandedAxe()) && (a_gripMode == ONEHANDEDGRIPMODE || a_gripMode == DUALWEILDGRIPMODE))
+				return 1;
+
 			if (form->As<RE::TESObjectWEAP>()->IsCrossbow())
 				return 12;		//xbow type is 9 same as spells but graph vars use the value 12
+
+			if (form->As<RE::TESObjectWEAP>()->IsStaff() && a_gripMode == MELEESTAFFGRIPMODE)
+				return 6;	//dupe melee staff into 2h axe
 
 			return (int)form->As<RE::TESObjectWEAP>()->GetWeaponType();
 		}
@@ -395,18 +402,22 @@ struct mainFunctions
 		return 11;
 	}
 
-	static void setHandAnim(RE::Actor* a_actor, bool left, std::string animVar)
+	static void setHandAnim(RE::Actor* a_actor, bool left, std::string animVar, int a_gripMode)
 	{
 		RE::BSFixedString s = "iLeftHand" + animVar;
 		if (!left)
 			s = "iRightHand" + animVar;
-		a_actor->SetGraphVariableInt(s, getObjectType(a_actor->GetEquippedObject(left)));
+		a_actor->SetGraphVariableInt(s, getObjectType(a_actor->GetEquippedObject(left), a_gripMode));
 	}
 
 	static void setBothHandsAnim(RE::Actor* a_actor, std::string animVar = "Type")
 	{
-		setHandAnim(a_actor, false, animVar);
-		setHandAnim(a_actor, true, animVar);
+		int gripMode = getCurrentGripMode(a_actor);
+		if (animVar != "Type")
+			gripMode = DEFAULTGRIPMODE;
+
+		setHandAnim(a_actor, false, animVar, gripMode);
+		setHandAnim(a_actor, true, animVar, gripMode);
 	}
 
 	static void OnItemEquipped(RE::PlayerCharacter* a_this, bool anim)
@@ -636,7 +647,7 @@ struct mainFunctions
 						//turn weapon in main hand into a 2h and remove left hand
 						newGrip = TWOHANDEDGRIPMODE;
 
-						if (leftHand && iWSDll)	//immersive weapon switch dll present
+						if (leftHand && IWSdll)	//immersive weapon switch dll present
 							return false;
 
 						isSwitching = true;
@@ -1105,14 +1116,17 @@ namespace Events
 									a_actor->NotifyAnimationGraph("GripSwitchEvent");
 
 								mainFunctions::toggleGrip(a_actor, newGrip);
-								originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
-								rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+								
+								//originalRightWeapon = rightHand->As<RE::TESObjectWEAP>()->GetWeaponType();
+								//rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
+								//mainFunctions::setBothHandsAnim(a_actor);
+								//rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
+								
+								if (a_actor->IsPlayerRef() && rightHand == leftHand)	//prevetn softlock if equipping same 2h on both hands whilst swinging wew					
+									mainFunctions::OnItemEquipped(RE::PlayerCharacter::GetSingleton(), false);
 
-								mainFunctions::setBothHandsAnim(a_actor);
-
-								rightHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalRightWeapon;
 							}
-							return RE::BSEventNotifyControl::kContinue;
+							//return RE::BSEventNotifyControl::kContinue;
 						}
 						break;
 					};
@@ -1201,6 +1215,7 @@ namespace Hooks
 
 	struct changeTypes
 	{
+		/*
 		static void changeTypesFunction(RE::Actor* a_actor)
 		{
 			auto rightHand = a_actor->GetEquippedObject(false);
@@ -1217,16 +1232,15 @@ namespace Hooks
 				if (mainFunctions::isTwoHanded(leftHand->As<RE::TESObjectWEAP>()))
 					leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = RE::WEAPON_TYPE::kOneHandSword;
 			}
-
 		}
-
+		*/
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			//int gripMode = mainFunctions::getCurrentGripMode(a_actor);
 			if (a_actor->IsPlayerRef())// && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) {
 			{
-				changeTypesFunction(a_actor);
-
+				//changeTypesFunction(a_actor);
+				mainFunctions::setBothHandsAnim(a_actor);	//manually set anim vars for equipped weapon
 			}
 
 			return func(a_actor, a1);
@@ -1236,6 +1250,7 @@ namespace Hooks
 
 	struct changeTypesBack
 	{
+		/*
 		static void changeTypesBackFunction(RE::Actor* a_actor)
 		{
 			auto rightHand = a_actor->GetEquippedObject(false);
@@ -1249,14 +1264,14 @@ namespace Hooks
 				leftHand->As<RE::TESObjectWEAP>()->weaponData.animationType = originalLeftWeapon;
 			}
 		}
-
+		*/
 		static std::int64_t* thunk(RE::Actor* a_actor, std::int64_t* a1)
 		{
 			//int gripMode = mainFunctions::getCurrentGripMode(a_actor);
 			if (a_actor->IsPlayerRef())// && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE)) 
 			{
-				changeTypesBackFunction(a_actor);
-
+				//changeTypesBackFunction(a_actor);
+				mainFunctions::setBothHandsAnim(a_actor);	//manually set anim vars for equipped weapon
 			}
 
 			return func(a_actor, a1);
@@ -1503,7 +1518,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	controlMap::installHooks();
 	Hooks::install();
 	Events::Register();
-
+	
 	auto g_message = SKSE::GetMessagingInterface();
 	g_message->RegisterListener([](SKSE::MessagingInterface::Message* msg) -> void
 		{
@@ -1528,7 +1543,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 
 
 					if (GetModuleHandle("ImmersiveWeaponSwitch"))
-						iWSDll = true;
+						IWSdll = true;
 				}
 			}
 
