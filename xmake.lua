@@ -6,7 +6,7 @@ includes("lib/commonlibsse-ng")
 
 -- set project
 set_project("DynamicGrip")
-set_version("0.0.0")
+set_version("0.6.2")
 set_license("GPL-3.0")
 
 -- set defaults

@@ -1317,7 +1317,7 @@ namespace Hooks
 		{
 			auto form = (RE::TESForm*)*a3;
 			//dupe 2h equipslot for a 1h
-			if (twoHWeaponEquipChecks(a_actor))
+			if (twoHWeaponEquipChecks(a_actor) && form->GetFormType() != RE::FormType::AlchemyItem)
 			{
 				//prevent 2h in left-hand if main hander isnt a 2h
 				if (mainFunctions::isTwoHanded(form) && a_equipSlot == leftHandSlot && !mainFunctions::isTwoHanded(a_actor->GetEquippedObject(false)))
@@ -1339,7 +1339,7 @@ namespace Hooks
 		static void thunk(std::int64_t* a1, RE::Actor* a_actor, RE::TESForm* a_form, std::int64_t* a4, int a5, std::int64_t* a_equipSlot, char a7, char a8, char a9, char a10)
 		{
 			//dupe 2h equipslot for a 1h
-			if (dupeEquipSlot::twoHWeaponEquipChecks(a_actor))
+			if (dupeEquipSlot::twoHWeaponEquipChecks(a_actor) && a_form->GetFormType() != RE::FormType::AlchemyItem)
 			{
 				dupeEquipSlot::convertAllWeaponSlots(a_actor, a_form);
 				func(a1, a_actor, a_form, a4, a5, a_equipSlot, a7, a8, a9, a10);
