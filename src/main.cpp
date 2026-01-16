@@ -340,32 +340,70 @@ struct mainFunctions
 
 	static std::uint32_t GetEquipState(RE::StandardItemData* a_this)
 	{
-		std::uint32_t a_result = _GetEquipState(a_this);
-		if (a_result > 1) {  //2 -left 3-right 4-left/right
-			RE::NiPointer<RE::TESObjectREFR> refr;
-			if (RE::LookupReferenceByHandle(a_this->owner, refr) && refr->IsPlayerRef())
-			{
-				auto eqObj = a_this->objDesc->object;
-				if (eqObj)
-				{
-
-					int gripMode = mainFunctions::getCurrentGripMode(RE::PlayerCharacter::GetSingleton());
-					if (gripMode == TWOHANDEDGRIPMODE || gripMode == MELEESTAFFGRIPMODE)
-						return 4;
-
-					auto player = RE::PlayerCharacter::GetSingleton();
-					auto rHand = player->GetEquippedObject(false);
-					//auto rHandEntry = player->GetEquippedEntryData(false);
-					auto lHand = player->GetEquippedObject(true);
-					//auto lHandEntry = player->GetEquippedEntryData(true);
-
-					if (a_result == 4 && rHand == lHand)// && rHandEntry == lHandEntry)
-						return 4;
-
-					if (a_result == 4 && gripMode != DEFAULTGRIPMODE && eqObj->IsWeapon() && isTwoHanded(eqObj->As<RE::TESObjectWEAP>()))
-						return 3;
-				}
+		// Early validation
+		if (!a_this || !a_this->objDesc || !a_this->objDesc->object) {
+			if (a_this) {
+				return _GetEquipState(a_this);
 			}
+			return 0;
+		}
+
+		// Skip custom logic during grip switching to avoid race conditions
+		if (isSwitching) {
+			return _GetEquipState(a_this);
+		}
+
+		// Verify player
+		auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return _GetEquipState(a_this);
+		}
+
+		// Check grip mode first - if default, use original function
+		int gripMode = mainFunctions::getCurrentGripMode(player);
+		if (gripMode == DEFAULTGRIPMODE) {
+			return _GetEquipState(a_this);
+		}
+
+		// For non-default grip modes, verify we're looking at player's items
+		RE::NiPointer<RE::TESObjectREFR> refr;
+		if (!RE::LookupReferenceByHandle(a_this->owner, refr) || !refr || !refr->IsPlayerRef()) {
+			return _GetEquipState(a_this);
+		}
+
+		// Get currently equipped objects safely
+		auto eqObj = a_this->objDesc->object;
+		auto rHand = player->GetEquippedObject(false);
+		auto lHand = player->GetEquippedObject(true);
+
+		// Calculate equip state manually for player items when in non-default grip mode
+		// 0 = not equipped, 1 = favorited only, 2 = left hand, 3 = right hand, 4 = both hands
+		
+		bool isRightHand = (rHand && rHand->GetFormID() == eqObj->GetFormID());
+		bool isLeftHand = (lHand && lHand->GetFormID() == eqObj->GetFormID());
+
+		std::uint32_t a_result = 0;
+		if (isRightHand && isLeftHand) {
+			a_result = 4;
+		} else if (isRightHand) {
+			a_result = 3;
+		} else if (isLeftHand) {
+			a_result = 2;
+		} else {
+			// Not equipped in hands, call original for favorite state etc.
+			return _GetEquipState(a_this);
+		}
+
+		// Apply grip mode modifications
+		if (a_result > 1) {
+			if (gripMode == TWOHANDEDGRIPMODE || gripMode == MELEESTAFFGRIPMODE)
+				return 4;
+
+			if (a_result == 4 && rHand == lHand)
+				return 4;
+
+			if (a_result == 4 && eqObj->IsWeapon() && isTwoHanded(eqObj->As<RE::TESObjectWEAP>()))
+				return 3;
 		}
 		return a_result;
 	}
@@ -378,16 +416,20 @@ struct mainFunctions
 
 		if (form->IsWeapon())
 		{
-			if ((form->As<RE::TESObjectWEAP>()->IsTwoHandedSword() || form->As<RE::TESObjectWEAP>()->IsTwoHandedAxe()) && (a_gripMode == ONEHANDEDGRIPMODE || a_gripMode == DUALWEILDGRIPMODE))
+			auto weap = form->As<RE::TESObjectWEAP>();
+			if (!weap)
+				return 0;
+
+			if ((weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()) && (a_gripMode == ONEHANDEDGRIPMODE || a_gripMode == DUALWEILDGRIPMODE))
 				return 1;
 
-			if (form->As<RE::TESObjectWEAP>()->IsCrossbow())
+			if (weap->IsCrossbow())
 				return 12;		//xbow type is 9 same as spells but graph vars use the value 12
 
-			if (form->As<RE::TESObjectWEAP>()->IsStaff() && a_gripMode == MELEESTAFFGRIPMODE)
+			if (weap->IsStaff() && a_gripMode == MELEESTAFFGRIPMODE)
 				return 6;	//dupe melee staff into 2h axe
 
-			return (int)form->As<RE::TESObjectWEAP>()->GetWeaponType();
+			return (int)weap->GetWeaponType();
 		}
 
 		//spells
@@ -404,6 +446,8 @@ struct mainFunctions
 
 	static void setHandAnim(RE::Actor* a_actor, bool left, std::string animVar, int a_gripMode)
 	{
+		if (!a_actor)
+			return;
 		RE::BSFixedString s = "iLeftHand" + animVar;
 		if (!left)
 			s = "iRightHand" + animVar;
@@ -422,6 +466,9 @@ struct mainFunctions
 
 	static void OnItemEquipped(RE::PlayerCharacter* a_this, bool anim)
 	{
+		if (!a_this)
+			return;
+			
 		int gripMode = getCurrentGripMode(a_this);
 		auto rightHand = a_this->GetEquippedObject(false);
 		auto leftHand = a_this->GetEquippedObject(true);
@@ -644,6 +691,7 @@ struct mainFunctions
 					if (isOneHanded(rightWeapon)) {
 						if (!checkPerk(a_actor, false))
 							return false;
+						
 						//turn weapon in main hand into a 2h and remove left hand
 						newGrip = TWOHANDEDGRIPMODE;
 
@@ -653,7 +701,7 @@ struct mainFunctions
 						isSwitching = true;
 
 						//unequip left weapon
-						checkAndUnequipLeft(a_actor, leftHand, true);
+						checkAndUnequipLeft(a_actor, leftHand);
 
 						//dummy anim var for unequip animation
 						mainFunctions::setBothHandsAnim(a_actor, "Equipped_DG");
@@ -702,7 +750,7 @@ struct mainFunctions
 						isSwitching = true;
 
 						//unequip left weapon
-						checkAndUnequipLeft(a_actor, leftHand, true);
+						checkAndUnequipLeft(a_actor, leftHand);
 					}
 					break;
 
@@ -723,14 +771,42 @@ struct mainFunctions
 				case ONEHANDEDGRIPMODE:
 				case DUALWEILDGRIPMODE:
 
-					isSwitching = true;
+					// If 1H weapon, switch to 2H grip mode
+					if (isOneHanded(rightWeapon)) {
+						if (!checkPerk(a_actor, false)) {
+							return false;
+						}
+						
+						isSwitching = true;
+						
+						newGrip = TWOHANDEDGRIPMODE;
 
-					//unequip left weapon
-					checkAndUnequipLeft(a_actor, leftHand, true);
-					//reset right-hand weapon anim var
-					if (!leftHand) {
+						//unequip left weapon (async like DEFAULTGRIPMODE case)
+						checkAndUnequipLeft(a_actor, leftHand);
+
+						// Clear left hand anim var immediately (unequip is async)
+						a_actor->SetGraphVariableInt("iLeftHandEquipped_DG", 0);
+						a_actor->SetGraphVariableInt("iLeftHandType", 0);
+
+						// Store weapon type and set to 2H temporarily (will be used after toggle)
+						originalRightWeapon = rightWeapon->GetWeaponType();
+						rightWeapon->weaponData.animationType = RE::WEAPON_TYPE::kTwoHandSword;
+						
+						// Don't call setBothHandsAnim before toggle - wait until after toggle
+						break;
+					} else {
+						// Otherwise go back to default grip
+						isSwitching = true;
+						
+						newGrip = DEFAULTGRIPMODE;
+						
+						//unequip left weapon
+						checkAndUnequipLeft(a_actor, leftHand, true);
+						
+						//reset right-hand weapon anim var
 						setBothHandsAnim(a_actor);
 					}
+					break;
 
 				default:
 					newGrip = DEFAULTGRIPMODE;
@@ -743,6 +819,33 @@ struct mainFunctions
 
 				if (forceEquipEvent)	//equip event for staff functionality	
 					a_actor->OnItemEquipped(false);
+				
+				// If switching to 2H grip, set animation vars after toggle
+				if (newGrip == TWOHANDEDGRIPMODE && rightWeapon) {
+					// Weapon animation type is still set to kTwoHandSword
+					// Now set animation vars with correct grip mode (TWOHANDEDGRIPMODE)
+					setBothHandsAnim(a_actor);
+					
+					// Then restore weapon animation type
+					rightWeapon->weaponData.animationType = originalRightWeapon;
+					
+					// Call OnItemEquipped for player to refresh state
+					if (a_actor->IsPlayerRef()) {
+						auto* player = a_actor->As<RE::PlayerCharacter>();
+						if (player) {
+							auto* task = SKSE::GetTaskInterface();
+							if (task) {
+								task->AddTask([player]() {
+									if (player) {
+										OnItemEquipped(player, false);
+									}
+								});
+							} else {
+								OnItemEquipped(player, false);
+							}
+						}
+					}
+				}
 			}
 		}
 		return true;
@@ -775,7 +878,7 @@ struct mainFunctions
 			return false;
 
 		auto weap = a_weap->As<RE::TESObjectWEAP>();
-		if (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace())
+		if (weap && (weap->IsOneHandedSword() || weap->IsOneHandedDagger() || weap->IsOneHandedAxe() || weap->IsOneHandedMace()))
 			return true;
 		return false;
 	}
@@ -786,14 +889,17 @@ struct mainFunctions
 			return false;
 
 		auto weap = a_weap->As<RE::TESObjectWEAP>();
-		if (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe())
+		if (weap && (weap->IsTwoHandedSword() || weap->IsTwoHandedAxe()))
 			return true;
 		return false;
 	}
 
 	static int getCurrentGripMode(RE::Actor* a_actor)
 	{
-		int a_result;
+		if (!a_actor) {
+			return DEFAULTGRIPMODE;
+		}
+		int a_result = DEFAULTGRIPMODE;
 		a_actor->GetGraphVariableInt("iDynamicGripMode", a_result);
 		return a_result;
 	}
@@ -902,20 +1008,89 @@ struct mainFunctions
 		}
 	}
 
-	static void checkAndUnequipLeft(RE::Actor* a_actor, RE::TESForm* a_form, bool leftH)
+	static void equipRightSlot(RE::Actor* a_actor, RE::TESForm* a_weapon)
+	{
+		if (!a_weapon)
+			return;
+
+		if (a_weapon->IsMagicItem() || checkInventory(a_actor, a_weapon))
+		{
+			auto* task = SKSE::GetTaskInterface();
+			auto  equipManager = RE::ActorEquipManager::GetSingleton();
+			task->AddTask([=]() {
+				if (a_weapon->IsMagicItem())
+					equipManager->EquipSpell(a_actor, a_weapon->As<RE::SpellItem>(), rightHandSlot);
+				else
+					equipManager->EquipObject(a_actor, a_weapon->As<RE::TESBoundObject>(), a_weapon->As<RE::ExtraDataList>(), 1, rightHandSlot, true, false, true, true);
+				});
+		}
+	}
+
+	static void checkAndUnequipLeft(RE::Actor* a_actor, RE::TESForm* a_form, bool now = true)
 	{
 		if (a_actor->IsPlayerRef())
 			previouLeftWeapon = a_form;  //save previous left weapon/shield/spell even if empty if player
 
 		if (a_form)
-			unequipLeftSlot(a_actor, leftH);
+			unequipLeftSlot(a_actor, a_form, now);
 	}
 
-	static void unequipLeftSlot(RE::Actor* a_actor, bool leftH, bool now = false)
+	// Native UnEquipSpell function from ActorEquipManager (like Wheeler uses)
+	static void UnEquipSpell(RE::Actor* a_actor, RE::SpellItem* spell, int hand)
 	{
-		auto form = a_actor->GetEquippedObject(leftH);
+		auto* equip_manager = RE::ActorEquipManager::GetSingleton();
+		if (!equip_manager || !a_actor || !spell) {
+			return;
+		}
+
+		// Use the native UnEquipSpell function (RELOCATION_ID from Wheeler)
+		// hand: 0 = left hand, 1 = right hand, 2 = shout/power slot
+		using func_t = void (RE::ActorEquipManager::*)(RE::Actor*, RE::SpellItem*, int);
+		REL::Relocation<func_t> func{ RELOCATION_ID(37947, 38903) };
+		return func(equip_manager, a_actor, spell, hand);
+	}
+
+	static void unequipLeftSlot(RE::Actor* a_actor, RE::TESForm* form, bool now = false)
+	{
 		if (!form)
 			return;
+
+		// Special handling for spells - use native UnEquipSpell function
+		if (form->Is(RE::FormType::Spell)) {
+			auto* spellItem = form->As<RE::SpellItem>();
+			if (spellItem) {
+				// Use native UnEquipSpell (0 = left hand)
+				UnEquipSpell(a_actor, spellItem, 0);
+				return;
+			}
+		}
+
+		// For scrolls, use UnequipObject (keep original parameters to prevent animation freezes)
+		// Scrolls are TESBoundObject, so UnequipObject works
+		if (form->Is(RE::FormType::Scroll)) {
+			auto* boundObj = form->As<RE::TESBoundObject>();
+			if (boundObj) {
+				auto* equip_manager = RE::ActorEquipManager::GetSingleton();
+				if (equip_manager) {
+					if (now) {
+						// Direct unequip (synchronous)
+						equip_manager->UnequipObject(a_actor, boundObj, nullptr, 1, leftHandSlot, false, true, false);
+					} else {
+						// Queued unequip (asynchronous)
+						auto* task = SKSE::GetTaskInterface();
+						if (task) {
+							task->AddTask([=]() {
+								equip_manager->UnequipObject(a_actor, boundObj, nullptr, 1, leftHandSlot, false, true, false);
+							});
+						} else {
+							// Fallback: direct unequip if no task interface
+							equip_manager->UnequipObject(a_actor, boundObj, nullptr, 1, leftHandSlot, false, true, false);
+						}
+					}
+				}
+				return;
+			}
+		}
 
 		RE::BGSEquipSlot* slot;
 		if (form->IsArmor())  //shield check
@@ -924,38 +1099,82 @@ struct mainFunctions
 			slot = leftHandSlot;
 
 		if (now)
-			unequipSlotNOW(a_actor, slot);
+			unequipSlotNOW(a_actor, slot, form);
 		else
-			unequipSlot(a_actor, slot);
+			unequipSlot(a_actor, slot, form);
 	}
 
-	static void unequipSlotNOW(RE::Actor* a_actor, RE::BGSEquipSlot* slot)
+	static void unequipSlotNOW(RE::Actor* a_actor, RE::BGSEquipSlot* slot, RE::TESForm* equippedForm = nullptr)
 	{
-		auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163);  //dummydagger
-		if (!form) {
-			return;
-		}
-		auto* proxy = form->As<RE::TESObjectWEAP>();
 		auto* equip_manager = RE::ActorEquipManager::GetSingleton();
-		equip_manager->EquipObject(a_actor, proxy, nullptr, 1, slot, false, true, false);
-		equip_manager->UnequipObject(a_actor, proxy, nullptr, 1, slot, false, true, false);
-		return;
-	}
+		if (!equip_manager)
+			return;
 
-	static void unequipSlot(RE::Actor* a_actor, RE::BGSEquipSlot* slot)
-	{
-		auto* task = SKSE::GetTaskInterface();
-		if (task) {
-			auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163); //dummydagger
-			if (!form) {
+		if (equippedForm) {
+			// For weapons, direct unequip works (keep original parameters to prevent animation freezes)
+			if (equippedForm->IsWeapon()) {
+				equip_manager->UnequipObject(a_actor, equippedForm->As<RE::TESObjectWEAP>(), nullptr, 1, slot, false, true, false);
 				return;
 			}
-			auto* proxy = form->As<RE::TESObjectWEAP>();
-			auto* equip_manager = RE::ActorEquipManager::GetSingleton();
-			task->AddTask([=]() { equip_manager->EquipObject(a_actor, proxy, nullptr, 1, slot, false, true, false); });
-			task->AddTask([=]() { equip_manager->UnequipObject(a_actor, proxy, nullptr, 1, slot, false, true, false); });
-			return;
+			// For armor (shields), direct unequip
+			else if (equippedForm->IsArmor()) {
+				equip_manager->UnequipObject(a_actor, equippedForm->As<RE::TESObjectARMO>(), nullptr, 1, slot, false, true, false);
+				return;
+			}
+			// For lights (torches), direct unequip
+			else if (equippedForm->Is(RE::FormType::Light)) {
+				equip_manager->UnequipObject(a_actor, equippedForm->As<RE::TESObjectLIGH>(), nullptr, 1, slot, false, true, false);
+				return;
+			}
 		}
+
+		// Fallback: dummy dagger trick for unknown types
+		auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163);  //dummydagger (Iron Dagger)
+		if (!form)
+			return;
+		auto* proxy = form->As<RE::TESObjectWEAP>();
+		equip_manager->EquipObject(a_actor, proxy, nullptr, 1, slot, false, true, false);
+		equip_manager->UnequipObject(a_actor, proxy, nullptr, 1, slot, false, true, false);
+	}
+
+	static void unequipSlot(RE::Actor* a_actor, RE::BGSEquipSlot* slot, RE::TESForm* equippedForm = nullptr)
+	{
+		auto* task = SKSE::GetTaskInterface();
+		if (!task)
+			return;
+
+		auto* equip_manager = RE::ActorEquipManager::GetSingleton();
+		if (!equip_manager)
+			return;
+
+		if (equippedForm) {
+			// For weapons, direct unequip works (keep original parameters to prevent animation freezes)
+			if (equippedForm->IsWeapon()) {
+				auto* weap = equippedForm->As<RE::TESObjectWEAP>();
+				task->AddTask([=]() { equip_manager->UnequipObject(a_actor, weap, nullptr, 1, slot, false, true, false); });
+				return;
+			}
+			// For armor (shields), direct unequip
+			else if (equippedForm->IsArmor()) {
+				auto* armor = equippedForm->As<RE::TESObjectARMO>();
+				task->AddTask([=]() { equip_manager->UnequipObject(a_actor, armor, nullptr, 1, slot, false, true, false); });
+				return;
+			}
+			// For lights (torches), direct unequip
+			else if (equippedForm->Is(RE::FormType::Light)) {
+				auto* light = equippedForm->As<RE::TESObjectLIGH>();
+				task->AddTask([=]() { equip_manager->UnequipObject(a_actor, light, nullptr, 1, slot, false, true, false); });
+				return;
+			}
+		}
+
+		// Fallback: dummy dagger trick for unknown types
+		auto* form = RE::TESForm::LookupByID<RE::TESForm>(0x00020163); //dummydagger (Iron Dagger)
+		if (!form)
+			return;
+		auto* proxy = form->As<RE::TESObjectWEAP>();
+		task->AddTask([=]() { equip_manager->EquipObject(a_actor, proxy, nullptr, 1, slot, false, true, false); });
+		task->AddTask([=]() { equip_manager->UnequipObject(a_actor, proxy, nullptr, 1, slot, false, true, false); });
 	}
 
 };
@@ -1082,7 +1301,8 @@ namespace Events
 				//unequip left hand if equipping a 2hander in right hand
 				if (rightHand && rightHand->IsWeapon() && rightHand->GetFormID() == form->GetFormID() && mainFunctions::isTwoHanded(rightHand->As<RE::TESObjectWEAP>()) && rightHand != leftHand)
 				{
-					mainFunctions::unequipLeftSlot(a_actor, true, true);
+					if (leftHand)
+						mainFunctions::unequipLeftSlot(a_actor, leftHand, true);
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
@@ -1091,7 +1311,12 @@ namespace Events
 					switch (gripMode) {
 					case MELEESTAFFGRIPMODE:
 					case TWOHANDEDGRIPMODE:  //main-hand base is 1H
+						// When equipping something while in 2H grip mode, switch back to default
+						a_actor->NotifyAnimationGraph("GripSwitchEvent");
 						mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
+						mainFunctions::setBothHandsAnim(a_actor);
+						if (a_actor->IsPlayerRef())
+							mainFunctions::OnItemEquipped(RE::PlayerCharacter::GetSingleton(), false);
 						break;
 
 						//case DEFAULTGRIPMODE:
@@ -1143,6 +1368,30 @@ namespace Events
 				{
 					lastBoundWeaponSpell = form->As<RE::MagicItem>();
 					return RE::BSEventNotifyControl::kContinue;
+				}
+
+				//QoL: move left hand weapon to right hand when right hand is unequipped in dual wield mode
+				if (a_actor->IsPlayerRef() && (gripMode == ONEHANDEDGRIPMODE || gripMode == DUALWEILDGRIPMODE))
+				{
+					// Right hand unequipped but left hand still has a weapon
+					if (!rightHand && leftHand && leftHand->IsWeapon() && form->IsWeapon() && form->GetFormID() != leftHand->GetFormID())
+					{
+						// Save the left hand weapon before unequipping
+						auto leftWeapon = leftHand;
+						
+						// Unequip left hand
+						mainFunctions::unequipLeftSlot(a_actor, leftWeapon, true);
+						
+						// Reset grip first
+						a_actor->NotifyAnimationGraph("GripSwitchEvent");
+						mainFunctions::toggleGrip(a_actor, DEFAULTGRIPMODE);
+						mainFunctions::setBothHandsAnim(a_actor);
+						
+						// Equip to right hand
+						mainFunctions::equipRightSlot(a_actor, leftWeapon);
+						
+						return RE::BSEventNotifyControl::kContinue;
+					}
 				}
 
 				//reset grip
