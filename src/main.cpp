@@ -304,6 +304,9 @@ struct mainFunctions
 
 	static void UpdateCombat(RE::Character* a_this)
 	{
+		if (!a_this)
+			return;
+
 		_UpdateCombat(a_this);
 		auto combatController = a_this->GetActorRuntimeData().combatController;
 		if (combatController)
